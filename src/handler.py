@@ -46,7 +46,7 @@ class ConnectionsHandler(AuthenticatedHandler):
         except ConnectionError as e:
             raise HTTPError(500, e.message)
 
-        self.write(ujson.dumps(connections))
+        self.dumps(connections)
 
     def options(self):
         self.set_header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
@@ -97,7 +97,7 @@ class ExternalHandler(AuthenticatedHandler):
         except APIError as e:
             raise HTTPError(e.code, e.body)
 
-        self.write(ujson.dumps(friends))
+        self.dumps(friends)
 
 
 class InternalHandler(object):
@@ -184,7 +184,7 @@ class RequestsHandler(AuthenticatedHandler):
         except RequestError as e:
             raise HTTPError(500, e.message)
 
-        self.write(ujson.dumps(outbox_profiles))
+        self.dumps(outbox_profiles)
 
     @scoped()
     @coroutine
@@ -263,4 +263,4 @@ class RequestsSentHandler(AuthenticatedHandler):
         except RequestError as e:
             raise HTTPError(500, e.message)
 
-        self.write(ujson.dumps(outbox_profiles))
+        self.dumps(outbox_profiles)
