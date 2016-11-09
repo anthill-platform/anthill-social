@@ -9,8 +9,6 @@ class RootAdminController(a.AdminController):
             a.notice("Not implemented", "Not implemented yet.")
         ]
 
-    def scopes_read(self):
+    def access_scopes(self):
         return ["social_admin"]
 
-    def scopes_write(self):
-        return ["social_admin"]
