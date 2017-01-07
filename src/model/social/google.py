@@ -80,7 +80,7 @@ class GoogleSocialAPI(SocialAPI, GoogleAPI):
         raise Return(friends)
 
     @coroutine
-    def get_social_profile(self, gamespace, account_id):
+    def get_social_profile(self, gamespace, username, account_id):
         user_info = yield self.call(
             gamespace,
             account_id,

@@ -118,7 +118,7 @@ class InternalHandler(object):
             raise InternalError(404, "No such credential: '{0}'.".format(credential))
 
         try:
-            result = yield api.get_social_profile(gamespace, account)
+            result = yield api.get_social_profile(gamespace, username, account)
         except APIError as e:
             raise InternalError(e.code, e.message)
         else:

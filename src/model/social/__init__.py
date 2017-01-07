@@ -38,7 +38,7 @@ class SocialAPI(object):
         raise NotImplementedError()
 
     @coroutine
-    def get_social_profile(self, gamespace, account_id):
+    def get_social_profile(self, gamespace, username, account_id):
         raise NotImplementedError()
 
     @coroutine
@@ -139,9 +139,11 @@ class SocialAPIModel(object):
 
         import google
         import facebook
+        import steam
 
         self.register(google.GoogleSocialAPI(application, tokens, cache))
         self.register(facebook.FacebookSocialAPI(application, tokens, cache))
+        self.register(steam.SteamSocialAPI(application, tokens, cache))
 
     def register(self, api, credential=None):
         if credential is None:
