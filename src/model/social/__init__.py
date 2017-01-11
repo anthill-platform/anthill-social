@@ -3,13 +3,10 @@ from tornado.gen import coroutine, Return
 
 from common.internal import Internal, InternalError
 
-from common import cached
 from .. token import NoSuchToken
-from abc import ABCMeta, abstractmethod
 
 import time
 import datetime
-import logging
 
 
 class SocialAuthenticationRequired(Exception):
@@ -23,8 +20,6 @@ class NoFriendsFound(Exception):
 
 
 class SocialAPI(object):
-
-    __metaclass__ = ABCMeta
 
     def __init__(self, application, tokens, credential_type, cache):
         self.application = application
@@ -62,35 +57,8 @@ class SocialAPI(object):
         }
         raise Return(result)
 
-    @abstractmethod
     def new_private_key(self, data):
         pass
-
-    @coroutine
-    def get_private_key(self, gamespace, data=None):
-        """
-        Looks for a key from login service.
-        """
-
-        if not data:
-            key_name = self.type()
-
-            @cached(kv=self.cache,
-                    h=lambda: "auth_key:" + str(gamespace) + ":" + key_name,
-                    ttl=300,
-                    json=True)
-            @coroutine
-            def get():
-                logging.info("Looking for key '{0}' in gamespace @{1}".format(key_name, gamespace))
-
-                key_data = yield self.internal.request(
-                    "login", "get_key", gamespace=gamespace, key_name=key_name)
-
-                raise Return(key_data)
-
-            data = yield get()
-
-        raise Return(self.new_private_key(data))
 
     def type(self):
         return self.credential_type

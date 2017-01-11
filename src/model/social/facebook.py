@@ -15,7 +15,7 @@ from common import to_int
 class FacebookSocialAPI(SocialAPI, FacebookAPI):
     def __init__(self, application, tokens, cache):
         SocialAPI.__init__(self, application, tokens, "facebook", cache)
-        FacebookAPI.__init__(self)
+        FacebookAPI.__init__(self, cache)
 
     @coroutine
     def call(self, gamespace, account_id, method, *args, **kwargs):
@@ -81,6 +81,3 @@ class FacebookSocialAPI(SocialAPI, FacebookAPI):
             expires_in, data)
 
         raise Return(result)
-
-    def new_private_key(self, data=None):
-        return FacebookPrivateKey(data)

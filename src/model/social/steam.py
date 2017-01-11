@@ -12,7 +12,7 @@ from .. token import NoSuchToken
 class SteamSocialAPI(SocialAPI, SteamAPI):
     def __init__(self, application, tokens, cache):
         SocialAPI.__init__(self, application, tokens, "steam", cache)
-        SteamAPI.__init__(self)
+        SteamAPI.__init__(self, cache)
 
     @coroutine
     def call(self, gamespace, account_id, method, *args, **kwargs):
@@ -37,6 +37,3 @@ class SteamSocialAPI(SocialAPI, SteamAPI):
     @coroutine
     def import_social(self, gamespace, username, auth):
         raise NotImplementedError()
-
-    def new_private_key(self, data):
-        return SteamPrivateKey(data)
