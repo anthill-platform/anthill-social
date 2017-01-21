@@ -105,7 +105,7 @@ class InternalHandler(object):
         self.application = application
 
     @coroutine
-    def attach_account(self, gamespace, credential, username, account):
+    def attach_account(self, gamespace, credential, username, account, env=None):
         yield self.application.tokens.attach(
             gamespace,
             credential,
@@ -118,7 +118,7 @@ class InternalHandler(object):
             raise InternalError(404, "No such credential: '{0}'.".format(credential))
 
         try:
-            result = yield api.get_social_profile(gamespace, username, account)
+            result = yield api.get_social_profile(gamespace, username, account, env=env)
         except APIError as e:
             raise InternalError(e.code, e.message)
         else:

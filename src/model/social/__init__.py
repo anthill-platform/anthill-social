@@ -33,7 +33,7 @@ class SocialAPI(object):
         raise NotImplementedError()
 
     @coroutine
-    def get_social_profile(self, gamespace, username, account_id):
+    def get_social_profile(self, gamespace, username, account_id, env=None):
         raise NotImplementedError()
 
     @coroutine
@@ -56,9 +56,6 @@ class SocialAPI(object):
             "account": account
         }
         raise Return(result)
-
-    def new_private_key(self, data):
-        pass
 
     def type(self):
         return self.credential_type

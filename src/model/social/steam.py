@@ -25,12 +25,13 @@ class SteamSocialAPI(SocialAPI, SteamAPI):
         raise Return(result)
 
     @coroutine
-    def get_social_profile(self, gamespace, username, account_id):
+    def get_social_profile(self, gamespace, username, account_id, env=None):
         user_info = yield self.call(
             gamespace,
             account_id,
             self.api_get_user_info,
-            username=username)
+            username=username,
+            env=env)
 
         raise Return(user_info)
 
