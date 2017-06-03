@@ -4,32 +4,20 @@ import ujson
 from tornado.gen import coroutine, Return
 from tornado.web import HTTPError
 
+from common import to_int
 from common.internal import InternalError
 from common.social import APIError, AuthResponse
 from common.handler import AuthenticatedHandler
-from common.access import scoped, AccessToken
+from common.access import scoped, AccessToken, parse_scopes
+from common.validate import validate_value, ValidationError
 
-from model.request import RequestError
-from model.connection import ConnectionError
+from model.request import RequestError, RequestType, NoSuchRequest
+from model.connection import ConnectionError, ConnectionsModel
 from model.social import SocialNotFound, NoFriendsFound, SocialAuthenticationRequired
+from model.group import GroupError, GroupsModel, GroupFlags, NoSuchGroup, NoSuchParticipation, GroupJoinMethod
 
 
 class ConnectionsHandler(AuthenticatedHandler):
-    @scoped()
-    @coroutine
-    def delete(self):
-        target_accounts = filter(
-            bool, 
-            self.get_argument("target_accounts").split(","))
-
-        try:
-            yield self.application.connections.delete(
-                self.token.account,
-                target_accounts)
-            
-        except ConnectionError as e:
-            raise HTTPError(500, e.message)
-
     @scoped()
     @coroutine
     def get(self):
@@ -44,39 +32,117 @@ class ConnectionsHandler(AuthenticatedHandler):
                 profile_fields)
             
         except ConnectionError as e:
-            raise HTTPError(500, e.message)
+            raise HTTPError(e.code, e.message)
 
         self.dumps(connections)
 
+
+class AccountConnectionHandler(AuthenticatedHandler):
+    @scoped()
+    @coroutine
+    def delete(self, target_account):
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            yield self.application.connections.delete(
+                gamespace, self.token.account, target_account, notify=notify)
+
+        except ConnectionError as e:
+            raise HTTPError(e.code, e.message)
+
     def options(self):
-        self.set_header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
+        self.set_header("Access-Control-Allow-Methods", "POST,DELETE,OPTIONS")
 
     @scoped()
     @coroutine
-    def post(self):
-        target_accounts = filter(
-            bool,
-            self.get_argument("target_accounts").split(","))
+    def post(self, target_account):
 
         approval = self.get_argument("approval", "true") == "true"
+        gamespace = self.token.get(AccessToken.GAMESPACE)
 
-        if approval:
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
             try:
-                yield self.application.requests.create(self.token.account, target_accounts)
-            except RequestError as e:
-                raise HTTPError(500, e.message)
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
         else:
-            @scoped(scopes=["required_approval"])
-            def create_connection():
-                return self.application.connections.create(self.token.account, target_accounts)
+            notify = None
 
+        if not approval and not self.token.has_scope(ConnectionsModel.APPROVAL_SCOPE):
+            raise HTTPError(403, "Scope '{0}' is required if approval is disabled".format(
+                ConnectionsModel.APPROVAL_SCOPE))
+
+        try:
+            result = yield self.application.connections.request_connection(
+                gamespace, self.token.account, target_account, approval=approval, notify=notify)
+        except ConnectionError as e:
+            raise HTTPError(e.code, e.message)
+
+        if result:
+            self.dumps(result)
+
+
+class ApproveConnectionHandler(AuthenticatedHandler):
+    @scoped()
+    @coroutine
+    def post(self, approve_account_id):
+        key = self.get_argument("key")
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account_id = self.token.account
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
             try:
-                yield create_connection()
-            except ConnectionError as e:
-                raise HTTPError(500, e.message)
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            yield self.application.connections.approve_connection(
+                gamespace, account_id, approve_account_id, key, notify=notify)
+        except ConnectionError as e:
+            raise HTTPError(e.code, e.message)
 
 
-class ExternalHandler(AuthenticatedHandler):
+class RejectConnectionHandler(AuthenticatedHandler):
+    @scoped()
+    @coroutine
+    def post(self, reject_account_id):
+
+        key = self.get_argument("key")
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account_id = self.token.account
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            yield self.application.connections.reject_connection(
+                gamespace, account_id, reject_account_id, key, notify=notify)
+        except ConnectionError as e:
+            raise HTTPError(500, e.message)
+
+
+class ExternalConnectionsHandler(AuthenticatedHandler):
     @scoped()
     @coroutine
     def get(self):
@@ -161,106 +227,453 @@ class InternalHandler(object):
                 profile_fields)
 
         except ConnectionError as e:
-            raise HTTPError(500, e.message)
+            raise HTTPError(e.code, e.message)
 
         raise Return(connections)
-            
 
-class RequestsHandler(AuthenticatedHandler):
-    @scoped()
-    @coroutine
-    def get(self):
 
-        profile_fields = filter(
-            bool,
-            self.get_argument("profile_fields", "").split(","))
-
-        try:
-            outbox_profiles = yield self.application.requests.list_inbox_profiles(
-                self.token.account,
-                profile_fields,
-                self.token.get(AccessToken.GAMESPACE))
-
-        except RequestError as e:
-            raise HTTPError(500, e.message)
-
-        self.dumps(outbox_profiles)
-
-    @scoped()
+class CreateGroupHandler(AuthenticatedHandler):
+    @scoped(scopes=["group_create"])
     @coroutine
     def post(self):
 
-        target_accounts = filter(
-            bool,
-            self.get_argument("target_accounts").split(","))
+        join_method_str = self.get_argument("join_method", GroupJoinMethod.FREE)
+        max_members = self.get_argument("max_members", GroupsModel.DEFAULT_MAX_MEMBERS)
 
-        action = self.get_argument("action")
+        if join_method_str not in GroupJoinMethod:
+            raise HTTPError(400, "Invalid join method")
 
-        @coroutine
-        def _accept():
-            try:
-                yield self.application.requests.accept(
-                    self.token.account,
-                    target_accounts,
-                    self.application.connections)
+        join_method = GroupJoinMethod(join_method_str)
 
-            except RequestError as e:
-                raise HTTPError(500, "Failed to accept a request: " + e.message)
-            except ConnectionError as e:
-                raise HTTPError(500, "Failed to accept a request: " + e.message)
+        try:
+            group_profile = ujson.loads(self.get_argument("group_profile", "{}"))
+        except (KeyError, ValueError):
+            raise HTTPError(400, "Profile is corrupted")
 
-        @coroutine
-        def _reject():
-            try:
-                yield self.application.requests.reject_requests(
-                    self.token.account,
-                    target_accounts,
-                    self.application.connections)
-            except RequestError as e:
-                raise HTTPError(500, "Failed to reject a request: " + e.message)
+        try:
+            participation_profile = ujson.loads(self.get_argument("participation_profile", "{}"))
+        except (KeyError, ValueError):
+            raise HTTPError(400, "Profile is corrupted")
 
-        actions = {
-            "accept": _accept,
-            "reject": _reject,
+        group_messages = self.get_argument("group_messages", "true") == "true"
+
+        flags = GroupFlags()
+
+        if group_messages:
+            flags.set(GroupFlags.MESSAGE_SUPPORT)
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account = self.token.account
+
+        try:
+            group_id = yield self.application.groups.create_group(
+                gamespace, group_profile, flags, join_method, max_members,
+                account, participation_profile)
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+        self.dumps({
+            "id": group_id
+        })
+
+
+class GroupHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def get(self, group_id):
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account_id = self.token.account
+
+        try:
+            group, participants, my_participation = yield self.application.groups.get_group_with_participants(
+                gamespace, group_id, account_id)
+        except NoSuchGroup as e:
+            raise HTTPError(404, "No such group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+        result = {
+            "group": {
+                "profile": group.profile,
+                "join_method": str(group.join_method),
+                "free_members": group.free_members,
+                "owner": str(group.owner)
+            },
+            "participants": {
+                participant.account: {
+                    "role": participant.role,
+                    "permissions": participant.permissions,
+                    "profile": participant.profile
+                }
+                for participant in participants
+            }
         }
 
-        if action in actions:
-            yield actions[action]()
+        if my_participation:
+            result["me"] = {
+                "role": my_participation.role,
+                "permissions": my_participation.permissions,
+                "profile": my_participation.profile
+            }
+
+            if GroupFlags.MESSAGE_SUPPORT in group.flags:
+                result["message"] = {
+                    "recipient_class": my_participation.message_recipient_class,
+                    "recipient": my_participation.message_recipient,
+                }
+
+        self.dumps(result)
+
+    @scoped(scopes=["group", "group_write"])
+    @coroutine
+    def post(self, group_id):
+
+        try:
+            group_profile = ujson.loads(self.get_argument("profile"))
+        except (KeyError, ValueError):
+            raise HTTPError(400, "Profile is corrupted")
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
         else:
-            raise HTTPError(400, "No such action: " + action)
+            notify = None
 
-
-class RequestsSentHandler(AuthenticatedHandler):
-    @scoped()
-    @coroutine
-    def delete(self):
-
-        target_accounts = filter(
-            bool,
-            self.get_argument("target_accounts").split(","))
+        merge = self.get_argument("merge", "true") == "true"
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account = self.token.account
 
         try:
-            yield self.application.requests.delete(
-                self.token.account,
-                target_accounts)
+            result = yield self.application.groups.update_group(
+                gamespace, group_id, account, group_profile, merge=merge, notify=notify)
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
 
-        except RequestError as e:
-            raise HTTPError(500, "Failed to cancel a request: " + e.message)
+        self.dumps({
+            "group": {
+                "profile": result
+            }
+        })
 
-    @scoped()
+
+class GroupJoinHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
     @coroutine
-    def get(self):
-        profile_fields = filter(
-            bool,
-            self.get_argument("profile_fields", "").split(","))
+    def post(self, group_id):
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account = self.token.account
+        key = self.get_argument("key", None)
 
         try:
-            outbox_profiles = yield self.application.requests.list_outbox_profiles(
-                self.token.account,
-                profile_fields,
-                self.token.get(AccessToken.GAMESPACE))
+            participation_profile = ujson.loads(self.get_argument("participation_profile", "{}"))
+        except (KeyError, ValueError):
+            raise HTTPError(400, "Profile is corrupted")
 
-        except RequestError as e:
-            raise HTTPError(500, e.message)
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
 
-        self.dumps(outbox_profiles)
+        try:
+            yield self.application.groups.join_group(
+                gamespace, group_id, account,
+                participation_profile, key=key, notify=notify)
+        except NoSuchGroup:
+            raise HTTPError(404, "No such group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+
+class GroupLeaveHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def post(self, group_id):
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account = self.token.account
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            yield self.application.groups.leave_group(
+                gamespace, group_id, account, notify=notify)
+        except NoSuchGroup:
+            raise HTTPError(404, "No such group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+
+class GroupOwnershipHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def post(self, group_id):
+
+        account_transfer_to = self.get_argument("account_transfer_to")
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account = self.token.account
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            yield self.application.groups.transfer_ownership(
+                gamespace, group_id, account, account_transfer_to, notify=notify)
+        except NoSuchGroup:
+            raise HTTPError(404, "No such group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+
+class GroupRequestJoinHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def post(self, group_id):
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account = self.token.account
+
+        try:
+            participation_profile = ujson.loads(self.get_argument("participation_profile", "{}"))
+        except (KeyError, ValueError):
+            raise HTTPError(400, "Profile is corrupted")
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            key = yield self.application.groups.join_group_request(
+                gamespace, group_id, account, participation_profile, notify=notify)
+        except NoSuchGroup:
+            raise HTTPError(404, "No such group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+        self.dumps({
+            "key": key
+        })
+
+
+class GroupInviteJoinHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def post(self, group_id, invite_account):
+
+        gamespace_id = self.token.get(AccessToken.GAMESPACE)
+        account_id = self.token.account
+        role = self.get_argument("role")
+
+        try:
+            permissions = ujson.loads(self.get_argument("permissions"))
+        except (KeyError, ValueError):
+            raise HTTPError(400, "Permissions json is corrupted")
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            key = yield self.application.groups.invite_to_group(
+                gamespace_id, group_id, account_id, invite_account,
+                role, permissions, notify=notify)
+        except NoSuchGroup:
+            raise HTTPError(404, "No such group")
+        except NoSuchParticipation:
+            raise HTTPError(406, "You are not a member of this group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+        self.dumps({
+            "key": key
+        })
+
+
+class GroupApproveJoinHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def post(self, group_id, approve_account):
+
+        gamespace_id = self.token.get(AccessToken.GAMESPACE)
+        account_id = self.token.account
+
+        role = to_int(self.get_argument("role"))
+        key = self.get_argument("key")
+
+        try:
+            permissions = ujson.loads(self.get_argument("permissions"))
+        except (KeyError, ValueError):
+            raise HTTPError(400, "Permissions json is corrupted")
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            yield self.application.groups.approve_join_group(
+                gamespace_id, group_id, account_id, approve_account,
+                role, key, permissions, notify=notify)
+        except NoSuchGroup:
+            raise HTTPError(404, "No such group")
+        except NoSuchParticipation:
+            raise HTTPError(406, "You are not a member of this group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+
+class GroupParticipationHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def get(self, group_id, account_id):
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+
+        if account_id == "me":
+            account_id = self.token.account
+
+        try:
+            participation = yield self.application.groups.get_group_participation(
+                gamespace, group_id, account_id)
+        except NoSuchParticipation as e:
+            raise HTTPError(404, "Player is not participating this group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+        self.dumps({
+            "participation": {
+                "profile": participation.profile,
+                "role": participation.role,
+                "permissions": participation.permissions
+            }
+        })
+
+    @scoped(scopes=["group"])
+    @coroutine
+    def post(self, group_id, account_id):
+
+        if account_id == "me":
+            account_id = self.token.account
+        else:
+            account_id = to_int(account_id)
+
+        try:
+            participation_profile = ujson.loads(self.get_argument("profile"))
+        except (KeyError, ValueError):
+            raise HTTPError(400, "Profile is corrupted")
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        my_account = self.token.account
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            result = yield self.application.groups.update_group_participation(
+                gamespace, group_id, my_account, account_id, participation_profile, notify=notify)
+        except NoSuchParticipation:
+            raise HTTPError(404, "Player is not participating this group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+        else:
+            self.dumps({
+                "profile": result
+            })
+
+    @scoped(scopes=["group"])
+    @coroutine
+    def delete(self, group_id, account_id):
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        my_account = self.token.account
+
+        try:
+            yield self.application.groups.kick_from_group(
+                gamespace, group_id, my_account, account_id)
+        except NoSuchParticipation:
+            raise HTTPError(404, "Player is not participating this group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+
+class GroupParticipationPermissionsHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def post(self, group_id, account_id):
+
+        if account_id == "me":
+            account_id = self.token.account
+        else:
+            account_id = to_int(account_id)
+
+        try:
+            permissions = validate_value(ujson.loads(self.get_argument("permissions")), "json_list_of_str_name")
+        except (KeyError, ValueError, ValidationError):
+            raise HTTPError(400, "Permissions json is corrupted")
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        target_role = to_int(self.get_argument("role"))
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        my_account = self.token.account
+
+        try:
+            yield self.application.groups.update_group_participation_permissions(
+                gamespace, group_id, my_account, account_id, target_role, permissions,
+                notify=notify)
+        except NoSuchGroup:
+            raise HTTPError(404, "No such group")
+        except NoSuchParticipation:
+            raise HTTPError(406, "Player is not participating this group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)

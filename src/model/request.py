@@ -1,18 +1,52 @@
 
 from tornado.gen import coroutine, Return
+
 import profile
-from common.database import DatabaseError
+import datetime
+import uuid
+import ujson
+
+from common import Enum
+from common.validate import validate
+from common.database import DatabaseError, DuplicateError
 
 
 class RequestError(Exception):
-    def __init__(self, message):
+    def __init__(self, code, message):
+        self.code = code
         self.message = message
 
     def __str__(self):
-        return self.message
+        return str(self.code) + ": " + self.message
+
+
+class NoSuchRequest(Exception):
+    pass
+
+
+class RequestAdapter(object):
+    def __init__(self, data):
+        self.type = RequestType(data.get("request_type", RequestType.ACCOUNT))
+        self.account = data.get("account_id")
+        self.object = data.get("request_object")
+        self.key = data.get("request_key")
+        self.payload = data.get("request_payload")
+
+
+class RequestType(Enum):
+    ACCOUNT = 'account'
+    GROUP = 'group'
+
+    ALL = {
+        ACCOUNT, GROUP
+    }
 
 
 class RequestsModel(profile.ProfilesModel):
+
+    # a week
+    REQUEST_EXPIRE_IN = 604800
+
     def __init__(self, db, cache):
         super(RequestsModel, self).__init__(db, cache)
 
@@ -20,169 +54,104 @@ class RequestsModel(profile.ProfilesModel):
         return self.db
 
     def get_setup_tables(self):
-        return ["account_requests"]
+        return ["requests"]
+
+    def get_setup_events(self):
+        return ["requests_expiration"]
 
     @coroutine
-    def accept(self, account_id, target_accounts, connections):
-        yield self.delete(
-            account_id,
-            target_accounts)
+    @validate(gamespace_id="int", account_id="int", request_type='str_name', request_object="int",
+              request_payload="json")
+    def create_request(self, gamespace_id, account_id, request_type, request_object, request_payload=None):
 
-        yield connections.create(
-            account_id,
-            target_accounts)
+        with (yield self.db.acquire()) as db:
+            existing_request = yield db.get(
+                """
+                SELECT `request_key` FROM `requests`
+                WHERE `gamespace_id`=%s AND `account_id`=%s AND `request_type`=%s AND `request_object`=%s
+                LIMIT 1;
+                """, gamespace_id, account_id, str(request_type), request_object)
 
-    @coroutine
-    def create(self, account_id, requested_accounts):
+            if existing_request:
+                raise Return(existing_request["request_key"])
 
-        if not isinstance(requested_accounts, list):
-            raise RequestError("requested_accounts is not a list")
+            expire = datetime.datetime.now() + datetime.timedelta(seconds=RequestsModel.REQUEST_EXPIRE_IN)
+            key = str(uuid.uuid4())
 
-        requests = yield self.list(
-            account_id,
-            requested_accounts)
-
-        for request_id, r in requests.iteritems():
-            requested_accounts.remove(request_id)
-
-        for request_id in requested_accounts:
             try:
-                yield self.db.insert("""
-                    INSERT INTO `account_requests`
-                    (`account_id`, `requested_account`)
-                    VALUES (%s, %s);
-                """, account_id, request_id)
-
+                yield db.execute(
+                    """
+                    INSERT INTO `requests`
+                    (`account_id`, `gamespace_id`, `request_type`, `request_object`, `request_expire`, 
+                        `request_key`, `request_payload`)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s);
+                    """, account_id, gamespace_id, str(request_type), request_object, expire, key,
+                    ujson.dumps(request_payload))
+            except DuplicateError:
+                raise RequestError(409, "Request already exists")
             except DatabaseError as e:
-                raise RequestError(
-                    "Failed to add a request: " + e.args[1])
+                raise RequestError(500, "Failed to create new request: " + str(e.args[1]))
+
+            raise Return(key)
 
     @coroutine
-    def cleanup(self, account_id):
+    @validate(gamespace_id="int", account_id="int")
+    def cleanup(self, gamespace_id, account_id):
         try:
             yield self.db.execute("""
-                DELETE FROM `account_requests`
-                WHERE `account_id`=%s;
-            """, account_id)
+                DELETE FROM `requests`
+                WHERE `gamespace_id`=%s AND `account_id`=%s;
+            """, gamespace_id, account_id)
 
         except DatabaseError as e:
-            raise RequestError(
-                "Failed to delete a request: " + e.args[1])
+            raise RequestError(500, "Failed to delete requests: " + str(e.args[1]))
 
     @coroutine
-    def delete(self, account_id, requested_accounts):
-
-        if not isinstance(requested_accounts, list):
-            raise RequestError("requested_accounts is not a list")
-
-        if not requested_accounts:
-            raise RequestError("Cannot delete empty set")
+    @validate(gamespace_id="int", account_id="int", request_type=RequestType, request_object="int")
+    def delete(self, gamespace_id, account_id, request_type, request_object):
 
         try:
-            yield self.db.insert(
+            deleted = yield self.db.execute(
                 """
-                    DELETE FROM `account_requests`
-                    WHERE `account_id`=%s AND `requested_account` IN (%s);
-                """, account_id, requested_accounts)
+                    DELETE FROM `requests`
+                    WHERE `account_id`=%s AND `gamespace_id`=%s AND `request_type`=%s AND `request_object`=%s
+                    LIMIT 1;
+                """, account_id, gamespace_id, str(request_type), request_object)
 
         except DatabaseError as e:
-            raise RequestError("Failed to delete a request: " + e.args[1])
+            raise RequestError(500, "Failed to delete a request: " + str(e.args[1]))
+
+        raise Return(bool(deleted))
 
     @coroutine
-    def list(self, account_id, requested_accounts):
+    @validate(gamespace_id="int", account_id="int", key="str")
+    def acquire(self, gamespace_id, account_id, key):
 
-        if not isinstance(requested_accounts, list):
-            raise RequestError("requested_accounts is not a list")
+        with (yield self.db.acquire(auto_commit=False)) as db:
+            try:
+                request = yield db.get(
+                    """
+                        SELECT * FROM `requests`
+                        WHERE `gamespace_id`=%s AND `account_id`=%s AND `request_key`=%s
+                        LIMIT 1
+                        FOR UPDATE;
+                    """, gamespace_id, account_id, key)
 
-        if not requested_accounts:
-            raise RequestError("Cannot delete empty set")
+                if not request:
+                    raise NoSuchRequest()
 
-        try:
-            requests = yield self.db.query(
-                """
-                    SELECT *
-                    FROM `account_requests`
-                    WHERE `account_id`=%s AND `requested_account` IN (%s);
-                """, account_id, requested_accounts)
-        except DatabaseError as e:
-            raise RequestError("Failed to get a request: " + e.args[1])
-        else:
-            result = {
-                str(r["requested_account"]): r
-                for r in requests
-            }
+                request = RequestAdapter(request)
 
-            raise Return(result)
+                yield db.execute(
+                    """
+                    DELETE FROM `requests`
+                    WHERE `gamespace_id`=%s AND `account_id`=%s AND `request_type`=%s AND `request_object`=%s
+                    LIMIT 1;
+                    """, gamespace_id, request.account, str(request.type), request.object)
 
-    @coroutine
-    def list_inbox(self, account_id):
-        try:
-            requests = yield self.db.query(
-                """
-                    SELECT `account_id`
-                    FROM `account_requests`
-                    WHERE `requested_account`=%s
-                """, account_id)
-        except DatabaseError as e:
-            raise RequestError("Failed to list inbox: " + e.args[1])
+                raise Return(request)
 
-        accounts = [str(request["account_id"]) for request in requests]
-
-        raise Return(accounts)
-
-    @coroutine
-    def list_inbox_profiles(self, account_id, profile_fields, gamespace):
-        accounts = yield self.list_inbox(account_id)
-
-        try:
-            inbox_profiles = yield self.get_profiles(
-                account_id,
-                accounts,
-                profile_fields,
-                gamespace)
-
-        except profile.ProfileRequestError as e:
-            raise RequestError(e.message)
-
-        raise Return(inbox_profiles)
-
-    @coroutine
-    def list_outbox(self, account_id):
-        try:
-            requests = yield self.db.query(
-                """
-                    SELECT `requested_account`
-                    FROM `account_requests`
-                    WHERE `account_id`=%s
-                """, account_id)
-        except DatabaseError as e:
-            raise RequestError("Failed to list outbox: " + e.args[1])
-
-        accounts = [
-            str(request["requested_account"])
-            for request in requests
-        ]
-
-        raise Return(accounts)
-
-    @coroutine
-    def list_outbox_profiles(self, account_id, profile_fields, gamespace):
-        accounts = yield self.list_outbox(account_id)
-
-        try:
-            requests_profiles = yield self.get_profiles(
-                account_id,
-                accounts,
-                profile_fields,
-                gamespace)
-
-        except profile.ProfileRequestError as e:
-            raise RequestError(e.message)
-
-        raise Return(requests_profiles)
-
-    @coroutine
-    def reject_requests(self, account_id, target_accounts, connections):
-        yield self.delete(
-            account_id,
-            target_accounts)
+            except DatabaseError as e:
+                raise RequestError(500, "Failed to acquire a request: " + str(e.args[1]))
+            finally:
+                yield db.commit()

@@ -17,7 +17,7 @@ class GoogleSocialAPI(SocialAPI, GoogleAPI):
     @coroutine
     def call(self, gamespace, account_id, method, *args, **kwargs):
         """
-        Makes goole API call.
+        Makes google API call.
         Validates everything, gathers tokens and then yields `method` with all information.
         """
 

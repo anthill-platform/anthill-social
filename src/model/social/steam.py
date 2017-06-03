@@ -19,6 +19,7 @@ class SteamSocialAPI(SocialAPI, SteamAPI):
         """
         Makes steam API call.
         """
+
         private_key = yield self.get_private_key(gamespace)
         kwargs["key"] = private_key.key
         result = yield method(*args, **kwargs)
