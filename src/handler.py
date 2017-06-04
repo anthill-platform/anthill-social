@@ -354,8 +354,8 @@ class GroupHandler(AuthenticatedHandler):
 
             if GroupFlags.MESSAGE_SUPPORT in group.flags:
                 result["message"] = {
-                    "recipient_class": my_participation.message_recipient_class,
-                    "recipient": my_participation.message_recipient,
+                    "recipient_class": GroupsModel.GROUP_CLASS,
+                    "recipient": str(group_id),
                 }
 
         self.dumps(result)
