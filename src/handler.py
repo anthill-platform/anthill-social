@@ -610,9 +610,11 @@ class GroupParticipationHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        merge = self.get_argument("merge", "true") == "true"
+
         try:
             result = yield self.application.groups.update_group_participation(
-                gamespace, group_id, my_account, account_id, participation_profile, notify=notify)
+                gamespace, group_id, my_account, account_id, participation_profile, merge=merge, notify=notify)
         except NoSuchParticipation:
             raise HTTPError(404, "Player is not participating this group")
         except GroupError as e:
