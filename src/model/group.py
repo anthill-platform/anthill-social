@@ -13,6 +13,7 @@ from request import RequestType, NoSuchRequest, RequestError
 
 import ujson
 import logging
+import re
 
 
 class NoSuchGroup(Exception):
@@ -127,7 +128,9 @@ class GroupProfile(DatabaseProfile):
 
 class GroupAdapter(object):
     def __init__(self, data):
+        self.group_id = data.get("group_id")
         self.profile = data.get("group_profile") or {}
+        self.name = data.get("group_name")
         self.flags = GroupFlags(data.get("group_flags", "").split(","))
         self.join_method = GroupJoinMethod(data.get("group_join_method", GroupJoinMethod.FREE))
         self.free_members = data.get("group_free_members", GroupsModel.DEFAULT_MAX_MEMBERS)
@@ -198,9 +201,9 @@ class GroupsModel(Model):
     @coroutine
     @validate(gamespace_id="int", group_profile="json_dict", group_flags=GroupFlags,
               group_join_method=GroupJoinMethod, max_members="int", account_id="int",
-              participation_profile="json_dict")
+              participation_profile="json_dict", group_name="str_or_none")
     def create_group(self, gamespace_id, group_profile, group_flags, group_join_method, max_members,
-                     owner_account_id, participation_profile):
+                     owner_account_id, participation_profile, group_name=None):
 
         if max_members < 2:
             raise GroupError(400, "Max members cannot be lass than {0}".format(GroupsModel.MIN_MEMBERS_LIMIT))
@@ -221,10 +224,10 @@ class GroupsModel(Model):
                     """
                         INSERT INTO `groups`
                         (`gamespace_id`, `group_profile`, `group_flags`, `group_join_method`, 
-                            `group_free_members`, `group_owner`)
-                        VALUES (%s, %s, %s, %s, %s, %s);
+                            `group_free_members`, `group_owner`, `group_name`)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s);
                     """, gamespace_id, ujson.dumps(group_profile), str(group_flags),
-                    str(group_join_method), max_members, owner_account_id)
+                    str(group_join_method), max_members, owner_account_id, group_name)
             except DatabaseError as e:
                 raise GroupError(500, "Failed to create a group: " + str(e.args[1]))
 
@@ -938,3 +941,30 @@ class GroupsModel(Model):
             raise GroupError(500, "Failed to list group participants: " + str(e.args[1]))
 
         raise Return(map(GroupParticipationAdapter, participants))
+
+    @coroutine
+    @validate(gamespace_id="int", query="str")
+    def search_groups(self, gamespace_id, query, db=None):
+
+        words = re.findall(r'\w+', query)
+
+        if not words:
+            raise Return([])
+
+        if len(words) > 32:
+            # too many words
+            words = words[:32]
+
+        compiled = " ".join("+" + word + "*" for word in words)
+
+        try:
+            groups = yield (db or self.db).query(
+                """
+                    SELECT *
+                    FROM `groups`
+                    WHERE `gamespace_id`=%s AND MATCH(`group_name`) AGAINST (%s IN BOOLEAN MODE);
+                """, gamespace_id, compiled)
+        except DatabaseError as e:
+            raise GroupError(500, "Failed to list group participants: " + str(e.args[1]))
+
+        raise Return(map(GroupAdapter, groups))

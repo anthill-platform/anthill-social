@@ -59,7 +59,8 @@ class SocialServer(common.server.Server):
 
             (r"/external", h.ExternalConnectionsHandler),
 
-            (r"/group/create", h.CreateGroupHandler),
+            (r"/groups/create", h.CreateGroupHandler),
+            (r"/groups/search", h.SearchGroupsHandler),
             (r"/group/([0-9]+)/participation/(.+)/permissions", h.GroupParticipationPermissionsHandler),
             (r"/group/([0-9]+)/participation/(.+)", h.GroupParticipationHandler),
             (r"/group/([0-9]+)/join", h.GroupJoinHandler),

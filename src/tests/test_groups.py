@@ -447,3 +447,26 @@ class GroupsTestCase(common.testing.ServerTestCase):
 
         self.assertEquals(updated_group_participation_d.role, 400)
         self.assertEquals(updated_group_participation_d.profile, {"d": False})
+
+    @gen_test
+    def test_search(self):
+        group_a = yield self.groups.create_group(
+            GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
+            GroupJoinMethod(GroupJoinMethod.INVITE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"},
+            group_name="Lorem ipsum dolor sit amet, consectetur adipiscing elit, including same text at the end!")
+
+        group_b = yield self.groups.create_group(
+            GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
+            GroupJoinMethod(GroupJoinMethod.INVITE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"},
+            group_name="The quick brown fox jumps over the lazy dog, including same text at the end!")
+
+        result_1 = yield self.groups.search_groups(GroupsTestCase.GAMESPACE_ID, "quick brown fox")
+        self.assertEquals(len(result_1), 1)
+        self.assertEquals(result_1[0].group_id, group_b)
+
+        result_2 = yield self.groups.search_groups(GroupsTestCase.GAMESPACE_ID, "Lor")
+        self.assertEquals(len(result_2), 1)
+        self.assertEquals(result_2[0].group_id, group_a)
+
+        result_3 = yield self.groups.search_groups(GroupsTestCase.GAMESPACE_ID, "including same text")
+        self.assertEquals(len(result_3), 2)

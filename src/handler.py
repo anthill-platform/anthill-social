@@ -277,6 +277,35 @@ class CreateGroupHandler(AuthenticatedHandler):
         })
 
 
+class SearchGroupsHandler(AuthenticatedHandler):
+    @scoped()
+    @coroutine
+    def get(self):
+
+        query = self.get_argument("query")
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account = self.token.account
+
+        try:
+            groups = yield self.application.groups.search_groups(gamespace, query)
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+        self.dumps({
+            "groups": [
+                {
+                    "group_id": group.group_id,
+                    "profile": group.profile,
+                    "join_method": str(group.join_method),
+                    "free_members": group.free_members,
+                    "owner": str(group.owner),
+                    "name": group.name
+                } for group in groups
+            ]
+        })
+
+
 class GroupHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
     @coroutine
@@ -293,13 +322,19 @@ class GroupHandler(AuthenticatedHandler):
         except GroupError as e:
             raise HTTPError(e.code, e.message)
 
+        group_out = {
+            "group_id": group.group_id,
+            "profile": group.profile,
+            "join_method": str(group.join_method),
+            "free_members": group.free_members,
+            "owner": str(group.owner)
+        }
+
+        if group.name:
+            group_out["name"] = group.name
+
         result = {
-            "group": {
-                "profile": group.profile,
-                "join_method": str(group.join_method),
-                "free_members": group.free_members,
-                "owner": str(group.owner)
-            },
+            "group": group_out,
             "participants": {
                 participant.account: {
                     "role": participant.role,
