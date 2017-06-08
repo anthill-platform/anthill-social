@@ -55,7 +55,7 @@ class ConnectionsModel(profile.ProfilesModel):
             raise ConnectionError(500, "Failed to add a connection: " + e.args[1])
 
     @coroutine
-    @validate(gamespace_id="int", account_id="int", approve_account_id="int", key="str", notify="json_dict_or_none")
+    @validate(gamespace_id="int", account_id="int", approve_account_id="int", key="str", notify="json_dict")
     def approve_connection(self, gamespace_id, account_id, approve_account_id, key, notify=None):
 
         try:
@@ -80,7 +80,7 @@ class ConnectionsModel(profile.ProfilesModel):
             ConnectionsModel.MESSAGE_CONNECTION_APPROVED, notify, ["remove_delivered"])
 
     @coroutine
-    @validate(gamespace_id="int", account_id="int", reject_account_id="int", key="str", notify="json_dict_or_none")
+    @validate(gamespace_id="int", account_id="int", reject_account_id="int", key="str", notify="json_dict")
     def reject_connection(self, gamespace_id, account_id, reject_account_id, key, notify=None):
 
         try:
@@ -99,7 +99,7 @@ class ConnectionsModel(profile.ProfilesModel):
             ConnectionsModel.MESSAGE_CONNECTION_REJECTED, notify, "remove_delivered")
 
     @coroutine
-    @validate(gamespace_id="int", account_id="int", target_account="int", approval="bool", notify="json_dict_or_none")
+    @validate(gamespace_id="int", account_id="int", target_account="int", approval="bool", notify="json_dict")
     def request_connection(self, gamespace_id, account_id, target_account, approval=True, notify=None):
 
         if approval:
@@ -157,7 +157,7 @@ class ConnectionsModel(profile.ProfilesModel):
             raise ConnectionError(500, "Failed to delete a connection: " + e.args[1])
 
     @coroutine
-    @validate(gamespace_id="int", account_id="int", target_account="int", notify="json_dict_or_none")
+    @validate(gamespace_id="int", account_id="int", target_account="int", notify="json_dict")
     def delete(self, gamespace_id, account_id, target_account, notify=None):
 
         try:

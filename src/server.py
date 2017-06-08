@@ -65,6 +65,7 @@ class SocialServer(common.server.Server):
             (r"/group/([0-9]+)/participation/(.+)", h.GroupParticipationHandler),
             (r"/group/([0-9]+)/join", h.GroupJoinHandler),
             (r"/group/([0-9]+)/leave", h.GroupLeaveHandler),
+            (r"/group/([0-9]+)/profile", h.GroupProfileHandler),
             (r"/group/([0-9]+)/ownership", h.GroupOwnershipHandler),
             (r"/group/([0-9]+)/request", h.GroupRequestJoinHandler),
             (r"/group/([0-9]+)/approve/([0-9]+)", h.GroupApproveJoinHandler),

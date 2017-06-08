@@ -239,6 +239,7 @@ class CreateGroupHandler(AuthenticatedHandler):
 
         join_method_str = self.get_argument("join_method", GroupJoinMethod.FREE)
         max_members = self.get_argument("max_members", GroupsModel.DEFAULT_MAX_MEMBERS)
+        group_name = self.get_argument("name", None)
 
         if join_method_str not in GroupJoinMethod:
             raise HTTPError(400, "Invalid join method")
@@ -268,7 +269,7 @@ class CreateGroupHandler(AuthenticatedHandler):
         try:
             group_id = yield self.application.groups.create_group(
                 gamespace, group_profile, flags, join_method, max_members,
-                account, participation_profile)
+                account, participation_profile, group_name=group_name)
         except GroupError as e:
             raise HTTPError(e.code, e.message)
 
@@ -295,12 +296,14 @@ class SearchGroupsHandler(AuthenticatedHandler):
         self.dumps({
             "groups": [
                 {
-                    "group_id": group.group_id,
-                    "profile": group.profile,
-                    "join_method": str(group.join_method),
-                    "free_members": group.free_members,
-                    "owner": str(group.owner),
-                    "name": group.name
+                    "group": {
+                        "group_id": str(group.group_id),
+                        "profile": group.profile,
+                        "join_method": str(group.join_method),
+                        "free_members": int(group.free_members),
+                        "owner": str(group.owner),
+                        "name": group.name
+                    }
                 } for group in groups
             ]
         })
@@ -357,6 +360,78 @@ class GroupHandler(AuthenticatedHandler):
                     "recipient_class": GroupsModel.GROUP_CLASS,
                     "recipient": str(group_id),
                 }
+
+        self.dumps(result)
+
+    @scoped(scopes=["group", "group_write"])
+    @coroutine
+    def post(self, group_id):
+
+        new_name = self.get_argument("name", None)
+        new_join_method_str = self.get_argument("join_method", None)
+
+        if new_join_method_str:
+            if new_join_method_str not in GroupJoinMethod.ALL:
+                raise HTTPError(400, "Bad 'join_method'")
+
+            new_join_method = GroupJoinMethod(new_join_method_str)
+        else:
+            new_join_method = None
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account = self.token.account
+
+        try:
+            yield self.application.groups.update_group_summary(
+                gamespace, group_id, account, name=new_name, join_method=new_join_method, notify=notify)
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+
+class GroupProfileHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def get(self, group_id):
+
+        account_id = self.token.account
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+
+        try:
+            group = yield self.application.groups.get_group(gamespace, group_id)
+        except NoSuchGroup as e:
+            raise HTTPError(404, "No such group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+        try:
+            participant = yield self.application.groups.has_group_participation(gamespace, group_id, account_id)
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+        group_out = {
+            "group_id": group.group_id,
+            "profile": group.profile,
+            "join_method": str(group.join_method),
+            "free_members": group.free_members,
+            "owner": str(group.owner),
+        }
+
+        if group.name:
+            group_out["name"] = group.name
+
+        result = {
+            "group": group_out,
+            "participant": participant
+        }
 
         self.dumps(result)
 
@@ -604,6 +679,12 @@ class GroupParticipationHandler(AuthenticatedHandler):
             account_id = self.token.account
 
         try:
+            owner = yield self.application.groups.is_group_owner(
+                gamespace, group_id, account_id)
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+        try:
             participation = yield self.application.groups.get_group_participation(
                 gamespace, group_id, account_id)
         except NoSuchParticipation as e:
@@ -616,7 +697,8 @@ class GroupParticipationHandler(AuthenticatedHandler):
                 "profile": participation.profile,
                 "role": participation.role,
                 "permissions": participation.permissions
-            }
+            },
+            "owner": owner
         })
 
     @scoped(scopes=["group"])

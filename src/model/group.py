@@ -183,6 +183,7 @@ class GroupsModel(Model):
     MESSAGE_OWNERSHIP_TRANSFERRED = "ownership_transferred"
     MESSAGE_GROUP_PROFILE_UPDATED = "group_profile_updated"
     MESSAGE_PARTICIPATION_PROFILE_UPDATED = "participation_profile_updated"
+    MESSAGE_GROUP_RENAMED = "group_renamed"
     MESSAGE_GROUP_INVITE = "group_invite"
     MESSAGE_GROUP_REQUEST = "group_request"
     MESSAGE_GROUP_REQUEST_APPROVED = "group_request_approved"
@@ -201,7 +202,7 @@ class GroupsModel(Model):
     @coroutine
     @validate(gamespace_id="int", group_profile="json_dict", group_flags=GroupFlags,
               group_join_method=GroupJoinMethod, max_members="int", account_id="int",
-              participation_profile="json_dict", group_name="str_or_none")
+              participation_profile="json_dict", group_name="str")
     def create_group(self, gamespace_id, group_profile, group_flags, group_join_method, max_members,
                      owner_account_id, participation_profile, group_name=None):
 
@@ -268,7 +269,7 @@ class GroupsModel(Model):
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", group_profile="json_dict",
-              merge="bool", notify="json_dict_or_none")
+              merge="bool", notify="json_dict")
     def update_group(self, gamespace_id, group_id, account_id, group_profile, merge=True, notify=None):
 
         has_participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
@@ -292,9 +293,69 @@ class GroupsModel(Model):
         raise Return(result)
 
     @coroutine
+    @validate(gamespace_id="int", group_id="int", account_id="int", name="str", notify="json_dict")
+    def rename_group(self, gamespace_id, group_id, account_id, name, notify=None):
+
+        has_participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
+        if not has_participation:
+            raise GroupError(404, "Player has not participated this group")
+
+        yield self.db.execute(
+            """
+                UPDATE `groups`
+                SET `group_name`=%s
+                WHERE `gamespace_id`=%s AND `group_id`=%s
+                LIMIT 1;
+            """, name, gamespace_id, group_id)
+
+        if notify:
+            yield self.__send_message__(
+                gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
+                GroupsModel.MESSAGE_GROUP_RENAMED, notify)
+
+    @coroutine
+    @validate(gamespace_id="int", group_id="int", account_id="int", name="str",
+              join_method=GroupJoinMethod, notify="json_dict")
+    def update_group_summary(self, gamespace_id, group_id, account_id, name=None, join_method=None, notify=None):
+
+        has_participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
+        if not has_participation:
+            raise GroupError(404, "Player has not participated this group")
+
+        query = []
+        data = []
+
+        if name:
+            query.append(u'`group_name`=%s')
+            data.append(name)
+
+        if join_method:
+            query.append(u'`group_join_method`=%s')
+            data.append(str(join_method))
+
+        if not query:
+            raise GroupError(400, "Nothing to update")
+
+        data.append(gamespace_id)
+        data.append(group_id)
+
+        yield self.db.execute(
+            u"""
+                UPDATE `groups`
+                SET {0}
+                WHERE `gamespace_id`=%s AND `group_id`=%s
+                LIMIT 1;
+            """.format(u", ".join(query)), *data)
+
+        if notify:
+            yield self.__send_message__(
+                gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
+                GroupsModel.MESSAGE_GROUP_RENAMED, notify)
+
+    @coroutine
     @validate(gamespace_id="int", group_id="int", updater_account_id="int",
               participation_account_id="int", participation_profile="json_dict",
-              merge="bool", notify="json_dict_or_none")
+              merge="bool", notify="json_dict")
     def update_group_participation(self, gamespace_id, group_id, updater_account_id, participation_account_id,
                                    participation_profile, merge=True, notify=None):
 
@@ -327,7 +388,7 @@ class GroupsModel(Model):
     @coroutine
     @validate(gamespace_id="int", group_id="int", updater_account_id="int", participation_account_id="int",
               participation_role="int", participation_permissions="json_list_of_str_name",
-              notify="json_dict_or_none")
+              notify="json_dict")
     def update_group_participation_permissions(
             self, gamespace_id, group_id, updater_account_id, participation_account_id,
             participation_role, participation_permissions, notify=None):
@@ -442,6 +503,25 @@ class GroupsModel(Model):
                 raise NoSuchGroup()
 
             raise Return(GroupAdapter(group))
+
+    @coroutine
+    @validate(gamespace_id="int", group_id="int", account_id="int")
+    def is_group_owner(self, gamespace_id, group_id, account_id, db=None):
+        try:
+            data = yield (db or self.db).get(
+                """
+                    SELECT COUNT(*) AS result
+                    FROM `groups`
+                    WHERE `gamespace_id`=%s AND `group_id`=%s AND `group_owner`=%s
+                    LIMIT 1;
+                """, gamespace_id, group_id, account_id)
+        except DatabaseError as e:
+            raise GroupError(500, "Failed to check group ownership: " + str(e.args[1]))
+        else:
+            if not data:
+                raise Return(False)
+
+            raise Return(data["result"] > 0)
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int")
@@ -599,7 +679,7 @@ class GroupsModel(Model):
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", participation_profile="json_dict",
-              notify="json_dict_or_none")
+              notify="json_dict")
     def join_group_request(self, gamespace_id, group_id, account_id, participation_profile, notify=None):
 
         group = yield self.get_group(gamespace_id, group_id)
@@ -637,7 +717,7 @@ class GroupsModel(Model):
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int",
               invite_account_id="int", role="int", permissions="json_list_of_str_name",
-              notify="json_dict_or_none")
+              notify="json_dict")
     def invite_to_group(self, gamespace_id, group_id, account_id,
                         invite_account_id, role, permissions, notify=None):
 
@@ -679,7 +759,7 @@ class GroupsModel(Model):
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", approve_account_id="int",
-              role="int", key="str", permissions="json_list_of_str_name", notify="json_dict_or_none")
+              role="int", key="str", permissions="json_list_of_str_name", notify="json_dict")
     def approve_join_group(self, gamespace_id, group_id, account_id, approve_account_id,
                            role, key, permissions, notify=None):
 
@@ -729,7 +809,7 @@ class GroupsModel(Model):
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int",
-              participation_profile="json_dict", key="str_or_none", notify="json_dict_or_none")
+              participation_profile="json_dict", key="str", notify="json_dict")
     def join_group(self, gamespace_id, group_id, account_id, participation_profile,
                    key=None, notify=None):
 
@@ -803,8 +883,9 @@ class GroupsModel(Model):
                             group_key=str(group_id), account_id=account_id,
                             role="member", notify=notify)
                     except InternalError as e:
-                        logging.exception("Failed to join to message group.")
-                        raise GroupError(e.code, e.message)
+                        if e.code != 409:
+                            logging.exception("Failed to join to message group.")
+                            raise GroupError(e.code, e.message)
 
                 # first, add the joined record
 
@@ -843,33 +924,54 @@ class GroupsModel(Model):
                 yield db.commit()
 
     @coroutine
-    @validate(gamespace_id="int", group_id="int", account_id="int", notify="json_dict_or_none")
-    def leave_group(self, gamespace_id, group_id, account_id, db=None, group=None, notify=None):
+    @validate(gamespace_id="int", group_id="int", account_id="int", notify="json_dict")
+    def leave_group(self, gamespace_id, group_id, account_id, notify=None):
 
-        if not group:
-            group = yield self.get_group(gamespace_id, group_id, db=db)
-
-        if group.is_owner(account_id):
-            raise GroupError(409, "Group owner cannot leave a group, transfer ownership first")
-
-        if GroupFlags.MESSAGE_SUPPORT in group.flags:
+        with (yield self.db.acquire(auto_commit=False)) as db:
             try:
-                yield self.internal.request(
-                    "message", "leave_group",
-                    gamespace=gamespace_id, group_class=GroupsModel.GROUP_CLASS,
-                    group_key=str(group_id), account_id=account_id, notify=notify)
-            except InternalError as e:
-                raise GroupError(e.code, e.message)
+                data = yield db.get(
+                    """
+                        SELECT *
+                        FROM `groups`
+                        WHERE `gamespace_id`=%s AND `group_id`=%s
+                        LIMIT 1
+                        FOR UPDATE;
+                    """, gamespace_id, group_id)
 
-        try:
-            yield (db or self.db).execute(
-                """
-                    DELETE FROM `group_participants`
-                    WHERE `gamespace_id`=%s AND `group_id`=%s AND `account_id`=%s
-                    LIMIT 1;;
-                """, gamespace_id, group_id, account_id)
-        except DatabaseError as e:
-            raise GroupError(500, "Failed to leave a group: " + str(e.args[1]))
+                group = GroupAdapter(data)
+
+                if group.is_owner(account_id):
+                    raise GroupError(409, "Group owner cannot leave a group, transfer ownership first")
+
+                yield db.execute(
+                    """
+                        UPDATE `groups`
+                        SET `group_free_members`=`group_free_members`+1
+                        WHERE `gamespace_id`=%s AND `group_id`=%s
+                        LIMIT 1;
+                    """, gamespace_id, group_id)
+
+                yield db.execute(
+                    """
+                        DELETE FROM `group_participants`
+                        WHERE `gamespace_id`=%s AND `group_id`=%s AND `account_id`=%s
+                        LIMIT 1;;
+                    """, gamespace_id, group_id, account_id)
+
+                if GroupFlags.MESSAGE_SUPPORT in group.flags:
+                    try:
+                        yield self.internal.request(
+                            "message", "leave_group",
+                            gamespace=gamespace_id, group_class=GroupsModel.GROUP_CLASS,
+                            group_key=str(group_id), account_id=account_id, notify=notify)
+                    except InternalError as e:
+                        raise GroupError(e.code, e.message)
+
+            except DatabaseError as e:
+                raise GroupError(500, "Failed to get a group: " + str(e.args[1]))
+
+            finally:
+                yield db.commit()
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", kicker_account_id="int", account_id="int")
@@ -894,11 +996,10 @@ class GroupsModel(Model):
                 if account_permissions.role >= kicker_permissions.role:
                     raise GroupError(406, "You cannot kick a player with a higher role")
 
-            yield self.leave_group(gamespace_id, group_id, account_id, db=db, group=group)
+            yield self.leave_group(gamespace_id, group_id, account_id)
 
     @coroutine
-    @validate(gamespace_id="int", group_id="int", account_id="int", account_transfer_to="int",
-              notify="json_dict_or_none")
+    @validate(gamespace_id="int", group_id="int", account_id="int", account_transfer_to="int", notify="json_dict")
     def transfer_ownership(self, gamespace_id, group_id, account_id, account_transfer_to, notify=None):
 
         group = yield self.get_group(gamespace_id, group_id)
@@ -946,7 +1047,7 @@ class GroupsModel(Model):
     @validate(gamespace_id="int", query="str")
     def search_groups(self, gamespace_id, query, db=None):
 
-        words = re.findall(r'\w+', query)
+        words = re.findall(r'[^\s]+', query)
 
         if not words:
             raise Return([])
@@ -955,11 +1056,11 @@ class GroupsModel(Model):
             # too many words
             words = words[:32]
 
-        compiled = " ".join("+" + word + "*" for word in words)
+        compiled = u" ".join(u"+" + word + u"*" for word in words if len(word) > 2)
 
         try:
             groups = yield (db or self.db).query(
-                """
+                u"""
                     SELECT *
                     FROM `groups`
                     WHERE `gamespace_id`=%s AND MATCH(`group_name`) AGAINST (%s IN BOOLEAN MODE);
