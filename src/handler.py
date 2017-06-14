@@ -477,7 +477,6 @@ class GroupJoinHandler(AuthenticatedHandler):
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account = self.token.account
-        key = self.get_argument("key", None)
 
         try:
             participation_profile = ujson.loads(self.get_argument("participation_profile", "{}"))
@@ -496,7 +495,67 @@ class GroupJoinHandler(AuthenticatedHandler):
         try:
             yield self.application.groups.join_group(
                 gamespace, group_id, account,
+                participation_profile, notify=notify)
+        except NoSuchGroup:
+            raise HTTPError(404, "No such group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+
+class GroupAcceptInvitationHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def post(self, group_id):
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account = self.token.account
+        key = self.get_argument("key")
+
+        try:
+            participation_profile = ujson.loads(self.get_argument("participation_profile", "{}"))
+        except (KeyError, ValueError):
+            raise HTTPError(400, "Profile is corrupted")
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            yield self.application.groups.accept_group_invitation(
+                gamespace, group_id, account,
                 participation_profile, key=key, notify=notify)
+        except NoSuchGroup:
+            raise HTTPError(404, "No such group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+
+class GroupRejectInvitationHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def post(self, group_id):
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account = self.token.account
+        key = self.get_argument("key")
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            yield self.application.groups.reject_group_invitation(
+                gamespace, group_id, account, key=key, notify=notify)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
         except GroupError as e:
@@ -592,7 +651,7 @@ class GroupRequestJoinHandler(AuthenticatedHandler):
         })
 
 
-class GroupInviteJoinHandler(AuthenticatedHandler):
+class GroupInviteAccountJoinHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
     @coroutine
     def post(self, group_id, invite_account):
@@ -631,7 +690,7 @@ class GroupInviteJoinHandler(AuthenticatedHandler):
         })
 
 
-class GroupApproveJoinHandler(AuthenticatedHandler):
+class GroupApproveAccountJoinHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
     @coroutine
     def post(self, group_id, approve_account):
@@ -662,6 +721,41 @@ class GroupApproveJoinHandler(AuthenticatedHandler):
                 role, key, permissions, notify=notify)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
+        except NoSuchRequest:
+            raise HTTPError(404, "No such request")
+        except NoSuchParticipation:
+            raise HTTPError(406, "You are not a member of this group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+
+class GroupRejectAccountJoinHandler(AuthenticatedHandler):
+    @scoped(scopes=["group"])
+    @coroutine
+    def post(self, group_id, reject_account):
+
+        gamespace_id = self.token.get(AccessToken.GAMESPACE)
+        account_id = self.token.account
+
+        key = self.get_argument("key")
+
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
+        try:
+            yield self.application.groups.reject_join_group(
+                gamespace_id, group_id, account_id, reject_account,
+                key, notify=notify)
+        except NoSuchGroup:
+            raise HTTPError(404, "No such group")
+        except NoSuchRequest:
+            raise HTTPError(404, "No such request")
         except NoSuchParticipation:
             raise HTTPError(406, "You are not a member of this group")
         except GroupError as e:

@@ -393,7 +393,7 @@ class GroupsTestCase(common.testing.ServerTestCase):
             yield self.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                          GroupsTestCase.ACCOUNT_B, {"test": "b"})
 
-        self.assertEqual(e.exception.code, 406)
+        self.assertEqual(e.exception.code, 409)
 
         key_b = yield self.groups.invite_to_group(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A,
@@ -403,10 +403,10 @@ class GroupsTestCase(common.testing.ServerTestCase):
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A,
             GroupsTestCase.ACCOUNT_C, 600, [GroupsModel.PERMISSION_SEND_INVITE])
 
-        yield self.groups.join_group(
+        yield self.groups.accept_group_invitation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_B, {"b": True}, key_b)
 
-        yield self.groups.join_group(
+        yield self.groups.accept_group_invitation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C, {"c": True}, key_c)
 
         updated_group_participation_b = yield self.groups.get_group_participation(
@@ -434,12 +434,12 @@ class GroupsTestCase(common.testing.ServerTestCase):
 
         # use wrong key
         with (self.assertRaises(GroupError)) as e:
-            yield self.groups.join_group(
+            yield self.groups.accept_group_invitation(
                 GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_D, {"d": False}, key_c)
 
         self.assertEqual(e.exception.code, 410, "Should be 'No such invite request'")
 
-        yield self.groups.join_group(
+        yield self.groups.accept_group_invitation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_D, {"d": False}, key_d)
 
         updated_group_participation_d = yield self.groups.get_group_participation(

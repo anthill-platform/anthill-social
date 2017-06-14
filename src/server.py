@@ -68,8 +68,11 @@ class SocialServer(common.server.Server):
             (r"/group/([0-9]+)/profile", h.GroupProfileHandler),
             (r"/group/([0-9]+)/ownership", h.GroupOwnershipHandler),
             (r"/group/([0-9]+)/request", h.GroupRequestJoinHandler),
-            (r"/group/([0-9]+)/approve/([0-9]+)", h.GroupApproveJoinHandler),
-            (r"/group/([0-9]+)/invite/([0-9]+)", h.GroupInviteJoinHandler),
+            (r"/group/([0-9]+)/invitation/accept", h.GroupAcceptInvitationHandler),
+            (r"/group/([0-9]+)/invitation/reject", h.GroupRejectInvitationHandler),
+            (r"/group/([0-9]+)/approve/([0-9]+)", h.GroupApproveAccountJoinHandler),
+            (r"/group/([0-9]+)/reject/([0-9]+)", h.GroupRejectAccountJoinHandler),
+            (r"/group/([0-9]+)/invite/([0-9]+)", h.GroupInviteAccountJoinHandler),
             (r"/group/([0-9]+)", h.GroupHandler)
         ]
 

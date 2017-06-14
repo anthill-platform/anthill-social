@@ -187,6 +187,8 @@ class GroupsModel(Model):
     MESSAGE_GROUP_INVITE = "group_invite"
     MESSAGE_GROUP_REQUEST = "group_request"
     MESSAGE_GROUP_REQUEST_APPROVED = "group_request_approved"
+    MESSAGE_GROUP_REQUEST_REJECTED = "group_request_rejected"
+    MESSAGE_GROUP_INVITE_REJECTED = "group_invite_rejected"
 
     def __init__(self, db, requests):
         self.db = db
@@ -710,7 +712,8 @@ class GroupsModel(Model):
             yield self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS,
                 str(group_id), account_id,
-                GroupsModel.MESSAGE_GROUP_REQUEST, notify)
+                GroupsModel.MESSAGE_GROUP_REQUEST, notify,
+                flags=["editable", "deletable"])
 
         raise Return(key)
 
@@ -753,7 +756,8 @@ class GroupsModel(Model):
             })
             yield self.__send_message__(
                 gamespace_id, "user", str(invite_account_id), account_id,
-                GroupsModel.MESSAGE_GROUP_INVITE, notify, flags=["remove_delivered"])
+                GroupsModel.MESSAGE_GROUP_INVITE, notify,
+                flags=["editable", "deletable"])
 
         raise Return(key)
 
@@ -799,13 +803,49 @@ class GroupsModel(Model):
             gamespace_id, group_id, approve_account_id, role,
             participation_profile, permissions, message_support=message_support, notify=notify)
 
-        if notify and GroupFlags.MESSAGE_SUPPORT in group.flags:
+        if notify and message_support:
             notify.update({
-                "approved_by": str(account_id)
+                "approved_by": str(account_id),
+                "group_id": str(group_id),
             })
             yield self.__send_message__(
-                gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), approve_account_id,
-                GroupsModel.MESSAGE_GROUP_REQUEST_APPROVED, notify)
+                gamespace_id, "user", str(approve_account_id), account_id,
+                GroupsModel.MESSAGE_GROUP_REQUEST_APPROVED, notify,
+                flags=["remove_delivered"])
+
+    @coroutine
+    @validate(gamespace_id="int", group_id="int", account_id="int",
+              reject_account_id="int", key="str", notify="json_dict")
+    def reject_join_group(self, gamespace_id, group_id, account_id, reject_account_id, key, notify=None):
+
+        group = yield self.get_group(gamespace_id, group_id)
+
+        if group.join_method != GroupJoinMethod.APPROVE:
+            raise GroupError(409, "This group is not approve-like, it is: {0}".format(str(group.join_method)))
+
+        if not group.is_owner(account_id):
+            participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
+
+            if not participation.has_permission(GroupsModel.PERMISSION_REQUEST_APPROVAL):
+                raise GroupError(406, "You have no permission to reject items")
+
+        request = yield self.requests.acquire(gamespace_id, reject_account_id, key)
+
+        if request.type != RequestType.GROUP:
+            raise GroupError(400, "Bad request object")
+
+        if str(request.object) != str(group_id):
+            raise GroupError(406, "This invite key is not for that object")
+
+        if notify and GroupFlags.MESSAGE_SUPPORT in group.flags:
+            notify.update({
+                "rejected_by": str(account_id),
+                "group_id": str(group_id)
+            })
+            yield self.__send_message__(
+                gamespace_id, "user", str(reject_account_id), account_id,
+                GroupsModel.MESSAGE_GROUP_REQUEST_REJECTED, notify,
+                flags=["remove_delivered"])
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int",
@@ -851,6 +891,104 @@ class GroupsModel(Model):
         yield self.__internal_join_group__(
             gamespace_id, group_id, account_id, role,
             participation_profile, permissions, message_support=message_support, notify=notify)
+
+    @coroutine
+    @validate(gamespace_id="int", group_id="int", account_id="int",
+              participation_profile="json_dict", key="str", notify="json_dict")
+    def join_group(self, gamespace_id, group_id, account_id, participation_profile,
+                   key=None, notify=None):
+
+        group = yield self.get_group(gamespace_id, group_id)
+
+        if group.free_members == 0:
+            raise GroupError(410, "Group is full")
+
+        if group.join_method == GroupJoinMethod.FREE:
+            role = GroupsModel.MINIMUM_ROLE
+            permissions = []
+        else:
+            raise GroupError(409, "Group join method is not free, it is: {0}".format(str(group.join_method)))
+
+        message_support = GroupFlags.MESSAGE_SUPPORT in group.flags
+
+        yield self.__internal_join_group__(
+            gamespace_id, group_id, account_id, role,
+            participation_profile, permissions, message_support=message_support, notify=notify)
+
+    @coroutine
+    @validate(gamespace_id="int", group_id="int", account_id="int",
+              participation_profile="json_dict", key="str", notify="json_dict")
+    def accept_group_invitation(self, gamespace_id, group_id, account_id, participation_profile, key, notify=None):
+
+        group = yield self.get_group(gamespace_id, group_id)
+
+        if group.free_members == 0:
+            raise GroupError(410, "Group is full")
+
+        if group.join_method == GroupJoinMethod.INVITE:
+            if not key:
+                raise GroupError(406, "Group is invite-based and invite key is not passed")
+
+            try:
+                request = yield self.requests.acquire(gamespace_id, account_id, key)
+            except NoSuchRequest:
+                raise GroupError(410, "No such invite request")
+            except RequestError as e:
+                raise GroupError(500, e.message)
+
+            if request.type != RequestType.GROUP:
+                raise GroupError(400, "Bad request object")
+
+            if str(request.object) != str(group_id):
+                raise GroupError(406, "This invite key is not for that object")
+
+            payload = request.payload or {}
+
+            role = payload.get("role", GroupsModel.MINIMUM_ROLE)
+            permissions = payload.get("permissions", [])
+
+        else:
+            raise GroupError(409, "Group join method is not invite based, it is: {0}".format(str(group.join_method)))
+
+        message_support = GroupFlags.MESSAGE_SUPPORT in group.flags
+
+        yield self.__internal_join_group__(
+            gamespace_id, group_id, account_id, role,
+            participation_profile, permissions, message_support=message_support, notify=notify)
+
+    @coroutine
+    @validate(gamespace_id="int", group_id="int", account_id="int", key="str", notify="json_dict")
+    def reject_group_invitation(self, gamespace_id, group_id, account_id, key, notify=None):
+
+        group = yield self.get_group(gamespace_id, group_id)
+
+        if group.join_method == GroupJoinMethod.INVITE:
+            if not key:
+                raise GroupError(406, "Group is invite-based and invite key is not passed")
+
+            try:
+                request = yield self.requests.acquire(gamespace_id, account_id, key)
+            except NoSuchRequest:
+                raise GroupError(410, "No such invite request")
+            except RequestError as e:
+                raise GroupError(500, e.message)
+
+            if request.type != RequestType.GROUP:
+                raise GroupError(400, "Bad request object")
+
+            if str(request.object) != str(group_id):
+                raise GroupError(406, "This invite key is not for that object")
+
+        else:
+            raise GroupError(409, "Group join method is not invite based, it is: {0}".format(str(group.join_method)))
+
+        message_support = GroupFlags.MESSAGE_SUPPORT in group.flags
+
+        if message_support and notify:
+            yield self.__send_message__(
+                gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
+                GroupsModel.MESSAGE_GROUP_INVITE_REJECTED, notify,
+                flags=["remove_delivered"])
 
     @coroutine
     def __internal_join_group__(
