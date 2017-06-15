@@ -842,9 +842,18 @@ class GroupParticipationHandler(AuthenticatedHandler):
         gamespace = self.token.get(AccessToken.GAMESPACE)
         my_account = self.token.account
 
+        notify_str = self.get_argument("notify", None)
+        if notify_str:
+            try:
+                notify = ujson.loads(notify_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "Notify is corrupted")
+        else:
+            notify = None
+
         try:
             yield self.application.groups.kick_from_group(
-                gamespace, group_id, my_account, account_id)
+                gamespace, group_id, my_account, account_id, notify=notify)
         except NoSuchParticipation:
             raise HTTPError(404, "Player is not participating this group")
         except GroupError as e:

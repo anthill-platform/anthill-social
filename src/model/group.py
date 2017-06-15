@@ -181,6 +181,7 @@ class GroupsModel(Model):
 
     MESSAGE_PERMISSIONS_UPDATED = "permissions_updated"
     MESSAGE_OWNERSHIP_TRANSFERRED = "ownership_transferred"
+    MESSAGE_GROUP_KICKED = "kicked"
     MESSAGE_GROUP_PROFILE_UPDATED = "group_profile_updated"
     MESSAGE_PARTICIPATION_PROFILE_UPDATED = "participation_profile_updated"
     MESSAGE_GROUP_RENAMED = "group_renamed"
@@ -1112,8 +1113,8 @@ class GroupsModel(Model):
                 yield db.commit()
 
     @coroutine
-    @validate(gamespace_id="int", group_id="int", kicker_account_id="int", account_id="int")
-    def kick_from_group(self, gamespace_id, group_id, kicker_account_id, account_id):
+    @validate(gamespace_id="int", group_id="int", kicker_account_id="int", account_id="int", notify="json_dict")
+    def kick_from_group(self, gamespace_id, group_id, kicker_account_id, account_id, notify=None):
 
         with (yield self.db.acquire()) as db:
             group = yield self.get_group(gamespace_id, group_id, db=db)
@@ -1134,7 +1135,15 @@ class GroupsModel(Model):
                 if account_permissions.role >= kicker_permissions.role:
                     raise GroupError(406, "You cannot kick a player with a higher role")
 
-            yield self.leave_group(gamespace_id, group_id, account_id)
+            if notify:
+                notify["account_id"] = account_id
+
+                yield self.leave_group(gamespace_id, group_id, account_id, notify=notify)
+
+                if notify and GroupFlags.MESSAGE_SUPPORT in group.flags:
+                    yield self.__send_message__(
+                        gamespace_id, "user", str(account_id), kicker_account_id,
+                        GroupsModel.MESSAGE_GROUP_KICKED, notify, flags=["remove_delivered"])
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", account_transfer_to="int", notify="json_dict")
