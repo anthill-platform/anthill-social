@@ -9,7 +9,7 @@ from common.internal import InternalError
 from common.social import APIError, AuthResponse
 from common.handler import AuthenticatedHandler
 from common.access import scoped, AccessToken, parse_scopes
-from common.validate import validate_value, ValidationError
+from common.validate import validate, validate_value, ValidationError
 
 from model.request import RequestError, RequestType, NoSuchRequest
 from model.connection import ConnectionError, ConnectionsModel
@@ -53,9 +53,11 @@ class AccountConnectionHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             yield self.application.connections.delete(
-                gamespace, self.token.account, target_account, notify=notify)
+                gamespace, self.token.account, target_account, notify=notify, authoritative=authoritative)
 
         except ConnectionError as e:
             raise HTTPError(e.code, e.message)
@@ -79,13 +81,16 @@ class AccountConnectionHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         if not approval and not self.token.has_scope(ConnectionsModel.APPROVAL_SCOPE):
             raise HTTPError(403, "Scope '{0}' is required if approval is disabled".format(
                 ConnectionsModel.APPROVAL_SCOPE))
 
         try:
             result = yield self.application.connections.request_connection(
-                gamespace, self.token.account, target_account, approval=approval, notify=notify)
+                gamespace, self.token.account, target_account, approval=approval, notify=notify,
+                authoritative=authoritative)
         except ConnectionError as e:
             raise HTTPError(e.code, e.message)
 
@@ -109,6 +114,8 @@ class ApproveConnectionHandler(AuthenticatedHandler):
                 raise HTTPError(400, "Notify is corrupted")
         else:
             notify = None
+
+        authoritative = self.token.has_scope("message_authoritative")
 
         try:
             yield self.application.connections.approve_connection(
@@ -135,9 +142,11 @@ class RejectConnectionHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             yield self.application.connections.reject_connection(
-                gamespace, account_id, reject_account_id, key, notify=notify)
+                gamespace, account_id, reject_account_id, key, notify=notify, authoritative=authoritative)
         except ConnectionError as e:
             raise HTTPError(500, e.message)
 
@@ -230,6 +239,60 @@ class InternalHandler(object):
             raise HTTPError(e.code, e.message)
 
         raise Return(connections)
+
+    @coroutine
+    def get_group(self, gamespace, group_id):
+
+        try:
+            group, participants = yield self.application.groups.get_group_with_participants(
+                gamespace, group_id)
+        except NoSuchGroup:
+            raise InternalError(404, "No such group")
+        except GroupError as e:
+            raise InternalError(e.code, e.message)
+
+        group_out = {
+            "group_id": group.group_id,
+            "profile": group.profile,
+            "join_method": str(group.join_method),
+            "free_members": group.free_members,
+            "owner": str(group.owner)
+        }
+
+        if group.name:
+            group_out["name"] = group.name
+
+        result = {
+            "group": group_out,
+            "participants": {
+                int(participant.account): {
+                    "role": participant.role,
+                    "permissions": participant.permissions,
+                    "profile": participant.profile
+                }
+                for participant in participants
+            }
+        }
+
+        if GroupFlags.MESSAGE_SUPPORT in group.flags:
+            result["message"] = {
+                "recipient_class": GroupsModel.GROUP_CLASS,
+                "recipient": str(group_id),
+            }
+
+        raise Return(result)
+
+    @coroutine
+    @validate(gamespace="int", group_id="int", profile="json_dict", path="json_list_of_strings", merge="bool")
+    def update_group_profile(self, gamespace, group_id, profile, path=None, merge=True):
+
+        try:
+            result = yield self.application.groups.update_group_no_check(
+                gamespace, group_id, profile, path=path, merge=merge)
+        except GroupError as e:
+            raise InternalError(e.code, e.message)
+
+        raise Return(result)
 
 
 class CreateGroupHandler(AuthenticatedHandler):
@@ -387,12 +450,14 @@ class GroupHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account = self.token.account
 
         try:
             yield self.application.groups.update_group_summary(
-                gamespace, group_id, account, name=new_name, join_method=new_join_method, notify=notify)
+                gamespace, group_id, account, name=new_name, join_method=new_join_method,
+                notify=notify, authoritative=authoritative)
         except GroupError as e:
             raise HTTPError(e.code, e.message)
 
@@ -453,13 +518,15 @@ class GroupProfileHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
         merge = self.get_argument("merge", "true") == "true"
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account = self.token.account
 
         try:
             result = yield self.application.groups.update_group(
-                gamespace, group_id, account, group_profile, merge=merge, notify=notify)
+                gamespace, group_id, account, group_profile, merge=merge,
+                notify=notify, authoritative=authoritative)
         except GroupError as e:
             raise HTTPError(e.code, e.message)
 
@@ -492,10 +559,13 @@ class GroupJoinHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             yield self.application.groups.join_group(
                 gamespace, group_id, account,
-                participation_profile, notify=notify)
+                participation_profile, notify=notify,
+                authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
         except GroupError as e:
@@ -525,10 +595,13 @@ class GroupAcceptInvitationHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             yield self.application.groups.accept_group_invitation(
                 gamespace, group_id, account,
-                participation_profile, key=key, notify=notify)
+                participation_profile, key=key,
+                notify=notify, authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
         except GroupError as e:
@@ -553,9 +626,12 @@ class GroupRejectInvitationHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             yield self.application.groups.reject_group_invitation(
-                gamespace, group_id, account, key=key, notify=notify)
+                gamespace, group_id, account, key=key,
+                notify=notify, authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
         except GroupError as e:
@@ -579,9 +655,11 @@ class GroupLeaveHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             yield self.application.groups.leave_group(
-                gamespace, group_id, account, notify=notify)
+                gamespace, group_id, account, notify=notify, authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
         except GroupError as e:
@@ -607,9 +685,12 @@ class GroupOwnershipHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             yield self.application.groups.transfer_ownership(
-                gamespace, group_id, account, account_transfer_to, notify=notify)
+                gamespace, group_id, account, account_transfer_to,
+                notify=notify, authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
         except GroupError as e:
@@ -638,9 +719,12 @@ class GroupRequestJoinHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             key = yield self.application.groups.join_group_request(
-                gamespace, group_id, account, participation_profile, notify=notify)
+                gamespace, group_id, account, participation_profile,
+                notify=notify, authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
         except GroupError as e:
@@ -674,10 +758,12 @@ class GroupInviteAccountJoinHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             key = yield self.application.groups.invite_to_group(
                 gamespace_id, group_id, account_id, invite_account,
-                role, permissions, notify=notify)
+                role, permissions, notify=notify, authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
         except NoSuchParticipation:
@@ -715,10 +801,12 @@ class GroupApproveAccountJoinHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             yield self.application.groups.approve_join_group(
                 gamespace_id, group_id, account_id, approve_account,
-                role, key, permissions, notify=notify)
+                role, key, permissions, notify=notify, authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
         except NoSuchRequest:
@@ -748,10 +836,12 @@ class GroupRejectAccountJoinHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             yield self.application.groups.reject_join_group(
                 gamespace_id, group_id, account_id, reject_account,
-                key, notify=notify)
+                key, notify=notify, authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
         except NoSuchRequest:
@@ -821,11 +911,13 @@ class GroupParticipationHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
         merge = self.get_argument("merge", "true") == "true"
 
         try:
             result = yield self.application.groups.update_group_participation(
-                gamespace, group_id, my_account, account_id, participation_profile, merge=merge, notify=notify)
+                gamespace, group_id, my_account, account_id, participation_profile, merge=merge,
+                notify=notify, authoritative=authoritative)
         except NoSuchParticipation:
             raise HTTPError(404, "Player is not participating this group")
         except GroupError as e:
@@ -851,9 +943,12 @@ class GroupParticipationHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         try:
             yield self.application.groups.kick_from_group(
-                gamespace, group_id, my_account, account_id, notify=notify)
+                gamespace, group_id, my_account, account_id,
+                notify=notify, authoritative=authoritative)
         except NoSuchParticipation:
             raise HTTPError(404, "Player is not participating this group")
         except GroupError as e:
@@ -884,6 +979,8 @@ class GroupParticipationPermissionsHandler(AuthenticatedHandler):
         else:
             notify = None
 
+        authoritative = self.token.has_scope("message_authoritative")
+
         target_role = to_int(self.get_argument("role"))
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
@@ -892,7 +989,7 @@ class GroupParticipationPermissionsHandler(AuthenticatedHandler):
         try:
             yield self.application.groups.update_group_participation_permissions(
                 gamespace, group_id, my_account, account_id, target_role, permissions,
-                notify=notify)
+                notify=notify, authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
         except NoSuchParticipation:

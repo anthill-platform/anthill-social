@@ -55,8 +55,9 @@ class ConnectionsModel(profile.ProfilesModel):
             raise ConnectionError(500, "Failed to add a connection: " + e.args[1])
 
     @coroutine
-    @validate(gamespace_id="int", account_id="int", approve_account_id="int", key="str", notify="json_dict")
-    def approve_connection(self, gamespace_id, account_id, approve_account_id, key, notify=None):
+    @validate(gamespace_id="int", account_id="int", approve_account_id="int", key="str", notify="json_dict",
+              authoritative="bool")
+    def approve_connection(self, gamespace_id, account_id, approve_account_id, key, notify=None, authoritative=False):
 
         try:
             request = yield self.requests.acquire(
@@ -77,11 +78,13 @@ class ConnectionsModel(profile.ProfilesModel):
 
         yield self.__send_message__(
             gamespace_id, "user", str(request.account), account_id,
-            ConnectionsModel.MESSAGE_CONNECTION_APPROVED, notify, ["remove_delivered"])
+            ConnectionsModel.MESSAGE_CONNECTION_APPROVED, notify, ["remove_delivered"],
+            authoritative=authoritative)
 
     @coroutine
-    @validate(gamespace_id="int", account_id="int", reject_account_id="int", key="str", notify="json_dict")
-    def reject_connection(self, gamespace_id, account_id, reject_account_id, key, notify=None):
+    @validate(gamespace_id="int", account_id="int", reject_account_id="int", key="str", notify="json_dict",
+              authoritative="bool")
+    def reject_connection(self, gamespace_id, account_id, reject_account_id, key, notify=None, authoritative=False):
 
         try:
             request = yield self.requests.acquire(
@@ -96,11 +99,14 @@ class ConnectionsModel(profile.ProfilesModel):
 
         yield self.__send_message__(
             gamespace_id, "user", str(request.object), reject_account_id,
-            ConnectionsModel.MESSAGE_CONNECTION_REJECTED, notify, "remove_delivered")
+            ConnectionsModel.MESSAGE_CONNECTION_REJECTED, notify, ["remove_delivered"],
+            authoritative=authoritative)
 
     @coroutine
-    @validate(gamespace_id="int", account_id="int", target_account="int", approval="bool", notify="json_dict")
-    def request_connection(self, gamespace_id, account_id, target_account, approval=True, notify=None):
+    @validate(gamespace_id="int", account_id="int", target_account="int", approval="bool", notify="json_dict",
+              authoritative="bool")
+    def request_connection(self, gamespace_id, account_id, target_account, approval=True, notify=None,
+                           authoritative=False):
 
         if approval:
             try:
@@ -116,7 +122,8 @@ class ConnectionsModel(profile.ProfilesModel):
 
                 yield self.__send_message__(
                     gamespace_id, "user", str(target_account), account_id,
-                    ConnectionsModel.MESSAGE_CONNECTION_REQUEST, notify, ["remove_delivered"])
+                    ConnectionsModel.MESSAGE_CONNECTION_REQUEST, notify, ["remove_delivered"],
+                    authoritative=authoritative)
 
             raise Return({
                 "key": key
@@ -130,17 +137,19 @@ class ConnectionsModel(profile.ProfilesModel):
             if notify:
                 yield self.__send_message__(
                     gamespace_id, "user", str(target_account), account_id,
-                    ConnectionsModel.MESSAGE_CONNECTION_CREATED, notify, ["remove_delivered"])
+                    ConnectionsModel.MESSAGE_CONNECTION_CREATED, notify, ["remove_delivered"],
+                    authoritative=authoritative)
 
     @coroutine
     def __send_message__(self, gamespace_id, recipient_class, recipient_key,
-                         account_id, message_type, payload, flags=None):
+                         account_id, message_type, payload, flags=None, authoritative=False):
         try:
             yield self.internal.rpc(
                 "message", "send_message",
                 gamespace=gamespace_id, sender=account_id,
                 recipient_class=recipient_class, recipient_key=recipient_key,
-                message_type=message_type, payload=payload, flags=flags or [])
+                message_type=message_type, payload=payload, flags=flags or [],
+                authoritative=authoritative)
         except InternalError:
             pass  # well
 
@@ -157,8 +166,8 @@ class ConnectionsModel(profile.ProfilesModel):
             raise ConnectionError(500, "Failed to delete a connection: " + e.args[1])
 
     @coroutine
-    @validate(gamespace_id="int", account_id="int", target_account="int", notify="json_dict")
-    def delete(self, gamespace_id, account_id, target_account, notify=None):
+    @validate(gamespace_id="int", account_id="int", target_account="int", notify="json_dict", authoritative="bool")
+    def delete(self, gamespace_id, account_id, target_account, notify=None, authoritative=False):
 
         try:
             yield self.db.execute(
@@ -173,7 +182,8 @@ class ConnectionsModel(profile.ProfilesModel):
 
         yield self.__send_message__(
             gamespace_id, "user", str(target_account), account_id,
-            ConnectionsModel.MESSAGE_CONNECTION_DELETED, notify, ["remove_delivered"])
+            ConnectionsModel.MESSAGE_CONNECTION_DELETED, notify, ["remove_delivered"],
+            authoritative=authoritative)
 
     @coroutine
     def get_connections_profiles(self, gamespace_id, account_id, profile_fields):

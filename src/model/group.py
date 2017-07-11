@@ -271,9 +271,26 @@ class GroupsModel(Model):
         raise Return(group_id)
 
     @coroutine
+    @validate(gamespace_id="int", group_id="int", group_profile="json_dict",
+              path="json_list_of_strings", merge="bool")
+    def update_group_no_check(self, gamespace_id, group_id, group_profile, path=None, merge=True):
+
+        profile = GroupProfile(self.db, gamespace_id, group_id)
+
+        try:
+            result = yield profile.set_data(group_profile, path=path, merge=merge)
+        except NoDataError:
+            raise GroupError(404, "No such group")
+        except ProfileError as e:
+            raise GroupError(500, "Failed to update group profile: " + e.message)
+
+        raise Return(result)
+
+    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", group_profile="json_dict",
-              merge="bool", notify="json_dict")
-    def update_group(self, gamespace_id, group_id, account_id, group_profile, merge=True, notify=None):
+              merge="bool", notify="json_dict", authoritative="bool")
+    def update_group(self, gamespace_id, group_id, account_id, group_profile, merge=True,
+                     notify=None, authoritative=False):
 
         has_participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
         if not has_participation:
@@ -291,7 +308,7 @@ class GroupsModel(Model):
         if notify:
             yield self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
-                GroupsModel.MESSAGE_GROUP_PROFILE_UPDATED, notify)
+                GroupsModel.MESSAGE_GROUP_PROFILE_UPDATED, notify, authoritative=authoritative)
 
         raise Return(result)
 
@@ -318,8 +335,9 @@ class GroupsModel(Model):
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", name="str",
-              join_method=GroupJoinMethod, notify="json_dict")
-    def update_group_summary(self, gamespace_id, group_id, account_id, name=None, join_method=None, notify=None):
+              join_method=GroupJoinMethod, notify="json_dict", authoritative="bool")
+    def update_group_summary(self, gamespace_id, group_id, account_id, name=None, join_method=None,
+                             notify=None, authoritative=False):
 
         has_participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
         if not has_participation:
@@ -353,14 +371,14 @@ class GroupsModel(Model):
         if notify:
             yield self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
-                GroupsModel.MESSAGE_GROUP_RENAMED, notify)
+                GroupsModel.MESSAGE_GROUP_RENAMED, notify, authoritative=authoritative)
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", updater_account_id="int",
               participation_account_id="int", participation_profile="json_dict",
-              merge="bool", notify="json_dict")
+              merge="bool", notify="json_dict", authoritative="bool")
     def update_group_participation(self, gamespace_id, group_id, updater_account_id, participation_account_id,
-                                   participation_profile, merge=True, notify=None):
+                                   participation_profile, merge=True, notify=None, authoritative=False):
 
         group = yield self.get_group(gamespace_id, group_id)
 
@@ -384,24 +402,25 @@ class GroupsModel(Model):
         if notify:
             yield self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), updater_account_id,
-                GroupsModel.MESSAGE_PARTICIPATION_PROFILE_UPDATED, notify)
+                GroupsModel.MESSAGE_PARTICIPATION_PROFILE_UPDATED, notify, authoritative=authoritative)
 
         raise Return(result)
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", updater_account_id="int", participation_account_id="int",
               participation_role="int", participation_permissions="json_list_of_str_name",
-              notify="json_dict")
+              notify="json_dict", authoritative="bool")
     def update_group_participation_permissions(
             self, gamespace_id, group_id, updater_account_id, participation_account_id,
-            participation_role, participation_permissions, notify=None):
+            participation_role, participation_permissions, notify=None, authoritative=False):
 
         group = yield self.get_group(gamespace_id, group_id)
 
         if group.is_owner(updater_account_id):
             yield self.__internal_update_group_participation_permissions__(
                 gamespace_id, group_id, updater_account_id, participation_account_id,
-                participation_role, participation_permissions, notify=notify)
+                participation_role, participation_permissions,
+                notify=notify, authoritative=authoritative)
         else:
 
             if str(updater_account_id) == str(participation_account_id):
@@ -412,7 +431,8 @@ class GroupsModel(Model):
 
                 yield self.__internal_update_group_participation_permissions__(
                     gamespace_id, group_id, updater_account_id, participation_account_id, participation_role,
-                    participation_permissions, role_callback=check_increase, notify=notify)
+                    participation_permissions, role_callback=check_increase,
+                    notify=notify, authoritative=authoritative)
             else:
 
                 my_participation = yield self.get_group_participation(
@@ -431,12 +451,13 @@ class GroupsModel(Model):
 
                 yield self.__internal_update_group_participation_permissions__(
                     gamespace_id, group_id, updater_account_id, participation_account_id,
-                    participation_role, participation_permissions, role_callback=check_roles, notify=notify)
+                    participation_role, participation_permissions, role_callback=check_roles,
+                    notify=notify, authoritative=authoritative)
 
     @coroutine
     def __internal_update_group_participation_permissions__(
             self, gamespace_id, group_id, updater_account_id, account_id, participation_role,
-            participation_permissions, role_callback=None, notify=None):
+            participation_permissions, role_callback=None, notify=None, authoritative=False):
 
         with (yield self.db.acquire(auto_commit=False)) as db:
             try:
@@ -474,17 +495,19 @@ class GroupsModel(Model):
         if notify:
             yield self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), updater_account_id,
-                GroupsModel.MESSAGE_PERMISSIONS_UPDATED, notify)
+                GroupsModel.MESSAGE_PERMISSIONS_UPDATED, notify, authoritative=authoritative)
 
     @coroutine
     def __send_message__(self, gamespace_id, recipient_class, recipient_key,
-                         account_id, message_type, payload, flags=None):
+                         account_id, message_type, payload, flags=None, authoritative=False):
+
         try:
             yield self.internal.rpc(
                 "message", "send_message",
                 gamespace=gamespace_id, sender=account_id,
                 recipient_class=recipient_class, recipient_key=recipient_key,
-                message_type=message_type, payload=payload, flags=flags or [])
+                message_type=message_type, payload=payload, flags=flags or [],
+                authoritative=authoritative)
         except InternalError:
             pass  # well
 
@@ -528,14 +551,16 @@ class GroupsModel(Model):
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int")
-    def get_group_with_participants(self, gamespace_id, group_id, account_id):
+    def get_group_with_participants(self, gamespace_id, group_id, account_id=None):
         with (yield self.db.acquire()) as db:
             group = yield self.get_group(gamespace_id, group_id, db=db)
             participants = yield self.list_group_participants(gamespace_id, group_id, db=db)
-            my_participant = next((participant for participant in participants
-                                   if participant.account == account_id), None)
-
-            result = (group, participants, my_participant)
+            if account_id:
+                my_participant = next((participant for participant in participants
+                                       if participant.account == account_id), None)
+                result = (group, participants, my_participant)
+            else:
+                result = (group, participants)
             raise Return(result)
 
     @coroutine
@@ -682,8 +707,9 @@ class GroupsModel(Model):
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", participation_profile="json_dict",
-              notify="json_dict")
-    def join_group_request(self, gamespace_id, group_id, account_id, participation_profile, notify=None):
+              notify="json_dict", authoritative="bool")
+    def join_group_request(self, gamespace_id, group_id, account_id, participation_profile,
+                           notify=None, authoritative=False):
 
         group = yield self.get_group(gamespace_id, group_id)
 
@@ -714,16 +740,16 @@ class GroupsModel(Model):
                 gamespace_id, GroupsModel.GROUP_CLASS,
                 str(group_id), account_id,
                 GroupsModel.MESSAGE_GROUP_REQUEST, notify,
-                flags=["editable", "deletable"])
+                flags=["editable", "deletable"], authoritative=authoritative)
 
         raise Return(key)
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int",
               invite_account_id="int", role="int", permissions="json_list_of_str_name",
-              notify="json_dict")
+              notify="json_dict", authoritative="bool")
     def invite_to_group(self, gamespace_id, group_id, account_id,
-                        invite_account_id, role, permissions, notify=None):
+                        invite_account_id, role, permissions, notify=None, authoritative=False):
 
         group = yield self.get_group(gamespace_id, group_id)
 
@@ -758,15 +784,16 @@ class GroupsModel(Model):
             yield self.__send_message__(
                 gamespace_id, "user", str(invite_account_id), account_id,
                 GroupsModel.MESSAGE_GROUP_INVITE, notify,
-                flags=["editable", "deletable"])
+                flags=["editable", "deletable"], authoritative=authoritative)
 
         raise Return(key)
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", approve_account_id="int",
-              role="int", key="str", permissions="json_list_of_str_name", notify="json_dict")
+              role="int", key="str", permissions="json_list_of_str_name",
+              notify="json_dict", authoritative="bool")
     def approve_join_group(self, gamespace_id, group_id, account_id, approve_account_id,
-                           role, key, permissions, notify=None):
+                           role, key, permissions, notify=None, authoritative=False):
 
         group = yield self.get_group(gamespace_id, group_id)
 
@@ -802,7 +829,8 @@ class GroupsModel(Model):
 
         yield self.__internal_join_group__(
             gamespace_id, group_id, approve_account_id, role,
-            participation_profile, permissions, message_support=message_support, notify=notify)
+            participation_profile, permissions, message_support=message_support,
+            notify=notify, authoritative=authoritative)
 
         if notify and message_support:
             notify.update({
@@ -812,12 +840,13 @@ class GroupsModel(Model):
             yield self.__send_message__(
                 gamespace_id, "user", str(approve_account_id), account_id,
                 GroupsModel.MESSAGE_GROUP_REQUEST_APPROVED, notify,
-                flags=["remove_delivered"])
+                flags=["remove_delivered"], authoritative=authoritative)
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int",
-              reject_account_id="int", key="str", notify="json_dict")
-    def reject_join_group(self, gamespace_id, group_id, account_id, reject_account_id, key, notify=None):
+              reject_account_id="int", key="str", notify="json_dict", authoritative="bool")
+    def reject_join_group(self, gamespace_id, group_id, account_id, reject_account_id, key,
+                          notify=None, authoritative=False):
 
         group = yield self.get_group(gamespace_id, group_id)
 
@@ -846,58 +875,14 @@ class GroupsModel(Model):
             yield self.__send_message__(
                 gamespace_id, "user", str(reject_account_id), account_id,
                 GroupsModel.MESSAGE_GROUP_REQUEST_REJECTED, notify,
-                flags=["remove_delivered"])
+                flags=["remove_delivered"], authoritative=authoritative)
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int",
-              participation_profile="json_dict", key="str", notify="json_dict")
+              participation_profile="json_dict", key="str",
+              notify="json_dict", authoritative="bool")
     def join_group(self, gamespace_id, group_id, account_id, participation_profile,
-                   key=None, notify=None):
-
-        group = yield self.get_group(gamespace_id, group_id)
-
-        if group.free_members == 0:
-            raise GroupError(410, "Group is full")
-
-        if group.join_method == GroupJoinMethod.FREE:
-            role = GroupsModel.MINIMUM_ROLE
-            permissions = []
-        elif group.join_method == GroupJoinMethod.INVITE:
-            if not key:
-                raise GroupError(406, "Group is invite-based and invite key is not passed")
-
-            try:
-                request = yield self.requests.acquire(gamespace_id, account_id, key)
-            except NoSuchRequest:
-                raise GroupError(410, "No such invite request")
-            except RequestError as e:
-                raise GroupError(500, e.message)
-
-            if request.type != RequestType.GROUP:
-                raise GroupError(400, "Bad request object")
-
-            if str(request.object) != str(group_id):
-                raise GroupError(406, "This invite key is not for that object")
-
-            payload = request.payload or {}
-
-            role = payload.get("role", GroupsModel.MINIMUM_ROLE)
-            permissions = payload.get("permissions", [])
-
-        else:
-            raise GroupError(409, "Group join method is not free, it is: {0}".format(str(group.join_method)))
-
-        message_support = GroupFlags.MESSAGE_SUPPORT in group.flags
-
-        yield self.__internal_join_group__(
-            gamespace_id, group_id, account_id, role,
-            participation_profile, permissions, message_support=message_support, notify=notify)
-
-    @coroutine
-    @validate(gamespace_id="int", group_id="int", account_id="int",
-              participation_profile="json_dict", key="str", notify="json_dict")
-    def join_group(self, gamespace_id, group_id, account_id, participation_profile,
-                   key=None, notify=None):
+                   key=None, notify=None, authoritative=False):
 
         group = yield self.get_group(gamespace_id, group_id)
 
@@ -914,12 +899,14 @@ class GroupsModel(Model):
 
         yield self.__internal_join_group__(
             gamespace_id, group_id, account_id, role,
-            participation_profile, permissions, message_support=message_support, notify=notify)
+            participation_profile, permissions, message_support=message_support,
+            notify=notify, authoritative=authoritative)
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int",
-              participation_profile="json_dict", key="str", notify="json_dict")
-    def accept_group_invitation(self, gamespace_id, group_id, account_id, participation_profile, key, notify=None):
+              participation_profile="json_dict", key="str", notify="json_dict", authoritative="bool")
+    def accept_group_invitation(self, gamespace_id, group_id, account_id, participation_profile, key,
+                                notify=None, authoritative=False):
 
         group = yield self.get_group(gamespace_id, group_id)
 
@@ -955,11 +942,12 @@ class GroupsModel(Model):
 
         yield self.__internal_join_group__(
             gamespace_id, group_id, account_id, role,
-            participation_profile, permissions, message_support=message_support, notify=notify)
+            participation_profile, permissions, message_support=message_support,
+            notify=notify, authoritative=authoritative)
 
     @coroutine
-    @validate(gamespace_id="int", group_id="int", account_id="int", key="str", notify="json_dict")
-    def reject_group_invitation(self, gamespace_id, group_id, account_id, key, notify=None):
+    @validate(gamespace_id="int", group_id="int", account_id="int", key="str", notify="json_dict", authoritative="bool")
+    def reject_group_invitation(self, gamespace_id, group_id, account_id, key, notify=None, authoritative=False):
 
         group = yield self.get_group(gamespace_id, group_id)
 
@@ -989,12 +977,13 @@ class GroupsModel(Model):
             yield self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
                 GroupsModel.MESSAGE_GROUP_INVITE_REJECTED, notify,
-                flags=["remove_delivered"])
+                flags=["remove_delivered"], authoritative=authoritative)
 
     @coroutine
     def __internal_join_group__(
             self, gamespace_id, group_id, account_id, participation_role,
-            participation_profile, permissions, message_support=True, notify=None):
+            participation_profile, permissions, message_support=True,
+            notify=None, authoritative=False):
 
         with (yield self.db.acquire(auto_commit=False)) as db:
             try:
@@ -1020,7 +1009,7 @@ class GroupsModel(Model):
                             "message", "join_group",
                             gamespace=gamespace_id, group_class=GroupsModel.GROUP_CLASS,
                             group_key=str(group_id), account_id=account_id,
-                            role="member", notify=notify)
+                            role="member", notify=notify, authoritative=authoritative)
                     except InternalError as e:
                         if e.code != 409:
                             logging.exception("Failed to join to message group.")
@@ -1063,8 +1052,8 @@ class GroupsModel(Model):
                 yield db.commit()
 
     @coroutine
-    @validate(gamespace_id="int", group_id="int", account_id="int", notify="json_dict")
-    def leave_group(self, gamespace_id, group_id, account_id, notify=None):
+    @validate(gamespace_id="int", group_id="int", account_id="int", notify="json_dict", authoritative="bool")
+    def leave_group(self, gamespace_id, group_id, account_id, notify=None, authoritative=False):
 
         with (yield self.db.acquire(auto_commit=False)) as db:
             try:
@@ -1102,7 +1091,8 @@ class GroupsModel(Model):
                         yield self.internal.request(
                             "message", "leave_group",
                             gamespace=gamespace_id, group_class=GroupsModel.GROUP_CLASS,
-                            group_key=str(group_id), account_id=account_id, notify=notify)
+                            group_key=str(group_id), account_id=account_id,
+                            notify=notify, authoritative=authoritative)
                     except InternalError as e:
                         raise GroupError(e.code, e.message)
 
@@ -1113,8 +1103,10 @@ class GroupsModel(Model):
                 yield db.commit()
 
     @coroutine
-    @validate(gamespace_id="int", group_id="int", kicker_account_id="int", account_id="int", notify="json_dict")
-    def kick_from_group(self, gamespace_id, group_id, kicker_account_id, account_id, notify=None):
+    @validate(gamespace_id="int", group_id="int", kicker_account_id="int", account_id="int",
+              notify="json_dict", authoritative="bool")
+    def kick_from_group(self, gamespace_id, group_id, kicker_account_id, account_id,
+                        notify=None, authoritative=False):
 
         with (yield self.db.acquire()) as db:
             group = yield self.get_group(gamespace_id, group_id, db=db)
@@ -1138,16 +1130,20 @@ class GroupsModel(Model):
             if notify:
                 notify["account_id"] = account_id
 
-                yield self.leave_group(gamespace_id, group_id, account_id, notify=notify)
+                yield self.leave_group(gamespace_id, group_id, account_id,
+                                       notify=notify, authoritative=authoritative)
 
                 if notify and GroupFlags.MESSAGE_SUPPORT in group.flags:
                     yield self.__send_message__(
                         gamespace_id, "user", str(account_id), kicker_account_id,
-                        GroupsModel.MESSAGE_GROUP_KICKED, notify, flags=["remove_delivered"])
+                        GroupsModel.MESSAGE_GROUP_KICKED, notify,
+                        flags=["remove_delivered"], authoritative=authoritative)
 
     @coroutine
-    @validate(gamespace_id="int", group_id="int", account_id="int", account_transfer_to="int", notify="json_dict")
-    def transfer_ownership(self, gamespace_id, group_id, account_id, account_transfer_to, notify=None):
+    @validate(gamespace_id="int", group_id="int", account_id="int", account_transfer_to="int",
+              notify="json_dict", authoritative="bool")
+    def transfer_ownership(self, gamespace_id, group_id, account_id, account_transfer_to,
+                           notify=None, authoritative=False):
 
         group = yield self.get_group(gamespace_id, group_id)
 
@@ -1172,7 +1168,8 @@ class GroupsModel(Model):
         if notify and GroupFlags.MESSAGE_SUPPORT in group.flags:
             yield self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
-                GroupsModel.MESSAGE_OWNERSHIP_TRANSFERRED, notify)
+                GroupsModel.MESSAGE_OWNERSHIP_TRANSFERRED,
+                notify, authoritative=authoritative)
 
     @coroutine
     @validate(gamespace_id="int", group_id="int")
