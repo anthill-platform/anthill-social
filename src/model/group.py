@@ -1,5 +1,5 @@
 
-from tornado.gen import coroutine, Return
+from tornado.gen import coroutine, Return, multi
 
 from common import Flags, Enum
 
@@ -281,6 +281,26 @@ class GroupsModel(Model):
             result = yield profile.set_data(group_profile, path=path, merge=merge)
         except NoDataError:
             raise GroupError(404, "No such group")
+        except ProfileError as e:
+            raise GroupError(500, "Failed to update group profile: " + e.message)
+
+        raise Return(result)
+
+    @coroutine
+    @validate(gamespace_id="int", group_profiles="json_dict",
+              path="json_list_of_strings", merge="bool")
+    def update_groups_no_check(self, gamespace_id, group_profiles, path=None, merge=True):
+
+        calls = {}
+
+        for group_id, group_profile in group_profiles.iteritems():
+            profile = GroupProfile(self.db, gamespace_id, group_id)
+            calls[group_id] = profile.set_data(group_profile, path=path, merge=merge)
+
+        try:
+            result = yield calls
+        except NoDataError:
+            raise GroupError(404, "No such group(s)")
         except ProfileError as e:
             raise GroupError(500, "Failed to update group profile: " + e.message)
 

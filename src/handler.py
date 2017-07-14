@@ -294,6 +294,18 @@ class InternalHandler(object):
 
         raise Return(result)
 
+    @coroutine
+    @validate(gamespace="int", group_profiles="json_dict", path="json_list_of_strings", merge="bool")
+    def update_group_profiles(self, gamespace, group_profiles, path=None, merge=True):
+
+        try:
+            result = yield self.application.groups.update_groups_no_check(
+                gamespace, group_profiles, path=path, merge=merge)
+        except GroupError as e:
+            raise InternalError(e.code, e.message)
+
+        raise Return(result)
+
 
 class CreateGroupHandler(AuthenticatedHandler):
     @scoped(scopes=["group_create"])
