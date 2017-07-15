@@ -522,7 +522,7 @@ class GroupsModel(Model):
                          account_id, message_type, payload, flags=None, authoritative=False):
 
         try:
-            yield self.internal.rpc(
+            yield self.internal.request(
                 "message", "send_message",
                 gamespace=gamespace_id, sender=account_id,
                 recipient_class=recipient_class, recipient_key=recipient_key,
