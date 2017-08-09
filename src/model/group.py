@@ -126,6 +126,65 @@ class GroupProfile(DatabaseProfile):
             """, encoded, self.group_id, self.gamespace_id)
 
 
+class GroupBatchProfile(DatabaseProfile):
+    @staticmethod
+    def __encode_profile__(profile):
+        return ujson.dumps(profile)
+
+    def __init__(self, db, gamespace_id, group_ids):
+        super(GroupBatchProfile, self).__init__(db)
+        self.gamespace_id = gamespace_id
+        self.group_ids = group_ids
+
+    @staticmethod
+    def __parse_profile__(profile):
+        return profile
+
+    @coroutine
+    def get(self):
+        groups = yield self.conn.query(
+            """
+                SELECT `group_profile`, `group_id`
+                FROM `groups`
+                WHERE `group_id` IN %s AND `gamespace_id`=%s
+                FOR UPDATE;
+            """, self.group_ids, self.gamespace_id)
+
+        if len(groups) != len(self.group_ids):
+            raise NoDataError()
+
+        raise Return({
+            str(group["group_id"]): GroupProfile.__parse_profile__(group["group_profile"])
+            for group in groups
+        })
+
+    @coroutine
+    def insert(self, data):
+        raise ProfileError("Insertion is not supported")
+
+    @coroutine
+    def update(self, data):
+
+        if not isinstance(data, dict):
+            raise ProfileError("Data is not a dict")
+
+        args = []
+        values = []
+
+        for group_id, group_profile in data.iteritems():
+            args.extend([group_id, self.gamespace_id, GroupProfile.__encode_profile__(group_profile)])
+            values.append("(%s, %s, 0, %s)")
+
+        yield self.conn.execute(
+            """
+                INSERT INTO `groups`
+                (`group_id`, `gamespace_id`, `group_owner`, `group_profile`) 
+                VALUES {0} 
+                ON DUPLICATE KEY 
+                UPDATE group_profile=VALUES(group_profile);
+            """.format(",".join(values)), *args)
+
+
 class GroupAdapter(object):
     def __init__(self, data):
         self.group_id = data.get("group_id")
@@ -282,7 +341,7 @@ class GroupsModel(Model):
         except NoDataError:
             raise GroupError(404, "No such group")
         except ProfileError as e:
-            raise GroupError(500, "Failed to update group profile: " + e.message)
+            raise GroupError(409, "Failed to update group profile: " + e.message)
 
         raise Return(result)
 
@@ -302,7 +361,7 @@ class GroupsModel(Model):
         except NoDataError:
             raise GroupError(404, "No such group(s)")
         except ProfileError as e:
-            raise GroupError(500, "Failed to update group profile: " + e.message)
+            raise GroupError(409, "Failed to update group profile: " + e.message)
 
         raise Return(result)
 
@@ -323,12 +382,27 @@ class GroupsModel(Model):
         except NoDataError:
             raise GroupError(404, "No such group")
         except ProfileError as e:
-            raise GroupError(500, "Failed to update group profile: " + e.message)
+            raise GroupError(409, "Failed to update group profile: " + e.message)
 
         if notify:
             yield self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
                 GroupsModel.MESSAGE_GROUP_PROFILE_UPDATED, notify, authoritative=authoritative)
+
+        raise Return(result)
+
+    @coroutine
+    @validate(gamespace_id="int", group_profiles="json_dict_of_dicts", merge="bool")
+    def update_groups(self, gamespace_id, group_profiles, merge=True):
+
+        profiles = GroupBatchProfile(self.db, gamespace_id, group_profiles.keys())
+
+        try:
+            result = yield profiles.set_data(group_profiles, None, merge=merge)
+        except NoDataError:
+            raise GroupError(404, "No such group")
+        except ProfileError as e:
+            raise GroupError(409, "Failed to update group profile: " + e.message)
 
         raise Return(result)
 
@@ -549,6 +623,22 @@ class GroupsModel(Model):
                 raise NoSuchGroup()
 
             raise Return(GroupAdapter(group))
+
+    @coroutine
+    @validate(gamespace_id="int", group_ids="json_list_of_ints")
+    def list_groups(self, gamespace_id, group_ids, db=None):
+        try:
+            groups = yield (db or self.db).query(
+                """
+                    SELECT *
+                    FROM `groups`
+                    WHERE `gamespace_id`=%s AND `group_id` IN %s
+                    LIMIT %s;
+                """, gamespace_id, group_ids, len(group_ids))
+        except DatabaseError as e:
+            raise GroupError(500, "Failed to get a group: " + str(e.args[1]))
+        else:
+            raise Return(map(GroupAdapter, groups))
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int")

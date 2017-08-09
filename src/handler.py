@@ -295,12 +295,16 @@ class InternalHandler(object):
         raise Return(result)
 
     @coroutine
-    @validate(gamespace="int", group_profiles="json_dict", path="json_list_of_strings", merge="bool")
-    def update_group_profiles(self, gamespace, group_profiles, path=None, merge=True):
+    @validate(gamespace="int", group_profiles="json_dict", path="json_list_of_strings", merge="bool", synced="bool")
+    def update_group_profiles(self, gamespace, group_profiles, path=None, merge=True, synced=False):
 
         try:
-            result = yield self.application.groups.update_groups_no_check(
-                gamespace, group_profiles, path=path, merge=merge)
+            if synced:
+                result = yield self.application.groups.update_groups(
+                    gamespace, group_profiles, merge=merge)
+            else:
+                result = yield self.application.groups.update_groups_no_check(
+                    gamespace, group_profiles, path=path, merge=merge)
         except GroupError as e:
             raise InternalError(e.code, e.message)
 
@@ -474,6 +478,77 @@ class GroupHandler(AuthenticatedHandler):
             raise HTTPError(e.code, e.message)
 
 
+class GroupBatchProfilesHandler(AuthenticatedHandler):
+    @scoped(scopes=["group_batch"])
+    @coroutine
+    def get(self):
+
+        try:
+            group_ids = ujson.loads(self.get_argument("group_ids"))
+        except (KeyError, ValueError):
+            raise HTTPError(400, "Corrupted group ID's")
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+
+        try:
+            groups = yield self.application.groups.list_groups(gamespace, group_ids)
+        except NoSuchGroup as e:
+            raise HTTPError(404, "No such group")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+        groups_out = {}
+
+        for group in groups:
+            group_out = {
+                "group_id": group.group_id,
+                "profile": group.profile,
+                "join_method": str(group.join_method),
+                "free_members": group.free_members,
+                "owner": str(group.owner),
+            }
+
+            if group.name:
+                group_out["name"] = group.name
+
+            groups_out[str(group.group_id)] = group_out
+
+        result = {
+            "groups": groups_out
+        }
+
+        self.dumps(result)
+
+    @scoped(scopes=["group_write", "group_batch"])
+    @coroutine
+    def post(self):
+
+        try:
+            group_profiles = ujson.loads(self.get_argument("profiles"))
+        except (KeyError, ValueError):
+            raise HTTPError(400, "Profile is corrupted")
+
+        merge = self.get_argument("merge", "true") == "true"
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+
+        try:
+            result = yield self.application.groups.update_groups(
+                gamespace, group_profiles, merge=merge)
+        except NoSuchParticipation:
+            raise HTTPError(406, "This account does not participate this group.")
+        except GroupError as e:
+            raise HTTPError(e.code, e.message)
+
+        self.dumps({
+            "groups": {
+                group_id: {
+                    "profile": group_profile
+                }
+                for group_id, group_profile in result.iteritems()
+            }
+        })
+
+
 class GroupProfileHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
     @coroutine
@@ -539,6 +614,8 @@ class GroupProfileHandler(AuthenticatedHandler):
             result = yield self.application.groups.update_group(
                 gamespace, group_id, account, group_profile, merge=merge,
                 notify=notify, authoritative=authoritative)
+        except NoSuchParticipation:
+            raise HTTPError(406, "This account does not participate this group.")
         except GroupError as e:
             raise HTTPError(e.code, e.message)
 
