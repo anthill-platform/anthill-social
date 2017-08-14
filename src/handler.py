@@ -761,6 +761,7 @@ class GroupOwnershipHandler(AuthenticatedHandler):
     def post(self, group_id):
 
         account_transfer_to = self.get_argument("account_transfer_to")
+        account_my_role = self.get_argument("my_role", 0)
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account = self.token.account
@@ -779,6 +780,7 @@ class GroupOwnershipHandler(AuthenticatedHandler):
         try:
             yield self.application.groups.transfer_ownership(
                 gamespace, group_id, account, account_transfer_to,
+                account_my_role,
                 notify=notify, authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")

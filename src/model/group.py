@@ -1251,9 +1251,9 @@ class GroupsModel(Model):
 
     @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", account_transfer_to="int",
-              notify="json_dict", authoritative="bool")
-    def transfer_ownership(self, gamespace_id, group_id, account_id, account_transfer_to,
-                           notify=None, authoritative=False):
+              account_my_role="int", notify="json_dict", authoritative="bool")
+    def transfer_ownership(self, gamespace_id, group_id, account_id,
+                           account_transfer_to, account_my_role, notify=None, authoritative=False):
 
         group = yield self.get_group(gamespace_id, group_id)
 
@@ -1274,6 +1274,22 @@ class GroupsModel(Model):
                 """, account_transfer_to, gamespace_id, group_id)
         except DatabaseError as e:
             raise GroupError(500, "Failed to transfer ownership: " + str(e.args[1]))
+
+        try:
+            # assign maximum role to new owner and set defined role to my own
+            yield self.db.execute(
+                """
+                    INSERT INTO `group_participants`
+                    (`gamespace_id`, `group_id`, `account_id`, `participation_role`, `participation_profile`,
+                        `participation_permissions`)
+                    VALUES (%s, %s, %s, %s, '{}', ''),
+                    (%s, %s, %s, %s, '{}', '')
+                    ON DUPLICATE KEY UPDATE 
+                      `participation_role`=VALUES(`participation_role`);
+                """, gamespace_id, group_id, account_id, account_my_role,
+                gamespace_id, group_id, account_transfer_to, GroupsModel.MAXIMUM_ROLE)
+        except DatabaseError:
+            pass
 
         if notify and GroupFlags.MESSAGE_SUPPORT in group.flags:
             yield self.__send_message__(
