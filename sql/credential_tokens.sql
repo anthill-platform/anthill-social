@@ -4,7 +4,7 @@ CREATE TABLE `credential_tokens` (
   `credential` varchar(255) NOT NULL,
   `username` varchar(255) NOT NULL,
   `access_token` mediumtext NOT NULL,
-  `expires_at` datetime NOT NULL,
+  `expires_at` datetime DEFAULT NULL,
   `payload` json NOT NULL,
   PRIMARY KEY (`gamespace_id`,`credential`,`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

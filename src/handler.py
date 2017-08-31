@@ -180,24 +180,27 @@ class InternalHandler(object):
         self.application = application
 
     @coroutine
-    def attach_account(self, gamespace, credential, username, account, env=None):
+    def attach_account(self, gamespace, credential, username, account, env=None, fetch_profile=True):
         yield self.application.tokens.attach(
             gamespace,
             credential,
             username,
             account)
 
-        try:
-            api = self.application.social.api(credential)
-        except SocialNotFound:
-            raise InternalError(404, "No such credential: '{0}'.".format(credential))
+        if fetch_profile:
+            try:
+                api = self.application.social.api(credential)
+            except SocialNotFound:
+                raise InternalError(404, "No such credential: '{0}'.".format(credential))
 
-        try:
-            result = yield api.get_social_profile(gamespace, username, account, env=env)
-        except APIError as e:
-            raise InternalError(e.code, e.message)
+            try:
+                result = yield api.get_social_profile(gamespace, username, account, env=env)
+            except APIError as e:
+                raise InternalError(e.code, e.message)
+            else:
+                raise Return(result)
         else:
-            raise Return(result)
+            raise Return("OK")
 
     @coroutine
     def import_social(self, gamespace, username, credential, auth):

@@ -42,7 +42,7 @@ class SocialAPI(object):
 
     @coroutine
     def import_data(self, gamespace, username, access_token, expires_in, data):
-        expires_at = datetime.datetime.fromtimestamp(int(time.time()) + expires_in)
+        expires_at = datetime.datetime.fromtimestamp(int(time.time()) + expires_in) if expires_in else None
 
         account = yield self.tokens.update_token(
             gamespace,
@@ -105,9 +105,11 @@ class SocialAPIModel(object):
         import google
         import facebook
         import steam
+        import vk
 
         self.register(google.GoogleSocialAPI(application, tokens, cache))
         self.register(facebook.FacebookSocialAPI(application, tokens, cache))
+        self.register(vk.VKSocialAPI(application, tokens, cache))
         self.register(steam.SteamSocialAPI(application, tokens, cache))
 
     def register(self, api, credential=None):
