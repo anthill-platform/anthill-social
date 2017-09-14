@@ -39,7 +39,7 @@ class SocialServer(common.server.Server):
         self.tokens = SocialTokensModel(self.db)
         self.requests = RequestsModel(self.db, self.cache)
         self.connections = ConnectionsModel(self.db, self.cache, self.requests)
-        self.social = SocialAPIModel(self, self.tokens, self.cache)
+        self.social = SocialAPIModel(self, self.tokens, self.connections, self.cache)
         self.groups = GroupsModel(self.db, self.requests)
 
     def get_models(self):
@@ -56,8 +56,6 @@ class SocialServer(common.server.Server):
             (r"/connection/([0-9]+)/approve", h.ApproveConnectionHandler),
             (r"/connection/([0-9]+)/reject", h.RejectConnectionHandler),
             (r"/connection/([0-9]+)", h.AccountConnectionHandler),
-
-            (r"/external", h.ExternalConnectionsHandler),
 
             (r"/groups/create", h.CreateGroupHandler),
             (r"/groups/search", h.SearchGroupsHandler),

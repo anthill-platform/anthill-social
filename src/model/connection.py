@@ -213,4 +213,4 @@ class ConnectionsModel(profile.ProfilesModel):
         except DatabaseError as e:
             raise ConnectionError(500, "Failed to get connections: " + e.args[1])
 
-        raise Return([int(c["account_connection"]) for c in connections])
+        raise Return([str(c["account_connection"]) for c in connections])

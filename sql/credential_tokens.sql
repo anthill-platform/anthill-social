@@ -6,5 +6,7 @@ CREATE TABLE `credential_tokens` (
   `access_token` mediumtext NOT NULL,
   `expires_at` datetime DEFAULT NULL,
   `payload` json NOT NULL,
-  PRIMARY KEY (`gamespace_id`,`credential`,`username`)
+  `merged_credential` varchar(512) NOT NULL DEFAULT '',
+  UNIQUE KEY `credential_unique` (`gamespace_id`,`credential`,`username`),
+  KEY `gamespace_id` (`gamespace_id`,`merged_credential`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

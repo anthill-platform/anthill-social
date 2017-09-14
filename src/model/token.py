@@ -41,12 +41,13 @@ class SocialTokensModel(Model):
     @coroutine
     def attach(self, gamespace_id, credential, username, account):
         try:
+            merged = str(credential) + ":" + str(username)
             yield self.db.execute(
                 """
                     UPDATE `credential_tokens`
                     SET `account_id`=%s
-                    WHERE `credential`=%s AND `username`=%s AND `gamespace_id`=%s;
-                """, account, credential, username, gamespace_id)
+                    WHERE `merged_credential`=%s AND `gamespace_id`=%s;
+                """, account, merged, gamespace_id)
 
         except DatabaseError as e:
             raise SocialTokensError("Failed to attach account: " + e.args[1])
@@ -73,12 +74,13 @@ class SocialTokensModel(Model):
     def get_credential(self, gamespace_id, credential, username):
 
         try:
+            merged = str(credential) + ":" + str(username)
             token = yield self.db.get(
                 """
                     SELECT *
                     FROM `credential_tokens`
-                    WHERE `credential`=%s AND `username`=%s AND `gamespace_id`=%s
-                """, credential, username, gamespace_id)
+                    WHERE `merged_credential`=%s AND `gamespace_id`=%s
+                """, merged, gamespace_id)
 
         except DatabaseError as e:
             raise SocialTokensError("Failed to get token credential: " + e.args[1])
@@ -87,6 +89,28 @@ class SocialTokensModel(Model):
             raise NoSuchToken()
 
         raise Return(SocialTokenAdapter(token))
+
+    @coroutine
+    def lookup_accounts(self, gamespace_id, credentials):
+
+        if not len(credentials):
+            raise Return([])
+
+        try:
+            tokens = yield self.db.query(
+                """
+                    SELECT *
+                    FROM `credential_tokens`
+                    WHERE `merged_credential` IN %s AND `gamespace_id`=%s
+                """, credentials, gamespace_id)
+
+        except DatabaseError as e:
+            raise SocialTokensError("Failed to get token credential: " + e.args[1])
+
+        raise Return({
+            str(token["merged_credential"]): str(token["account_id"])
+            for token in tokens
+        })
 
     @coroutine
     def list_tokens(self, gamespace_id, account_id):
@@ -110,6 +134,8 @@ class SocialTokensModel(Model):
     @coroutine
     def update_token(self, gamespace_id, credential, username, access_token, expires_at, data):
 
+        merged = str(credential) + ":" + str(username)
+
         try:
             old_token = yield self.get_credential(gamespace_id, credential, username)
             account = old_token.account
@@ -120,9 +146,10 @@ class SocialTokensModel(Model):
                 yield self.db.insert(
                     """
                         INSERT INTO `credential_tokens`
-                        (`credential`, `username`, `access_token`, `expires_at`, `payload`, `gamespace_id`)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """, credential, username, access_token, expires_at, data_text, gamespace_id)
+                        (`credential`, `username`, `access_token`, `expires_at`, `payload`, `gamespace_id`,
+                        `merged_credential`)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, credential, username, access_token, expires_at, data_text, gamespace_id, merged)
 
             except DatabaseError as e:
                 raise SocialTokensError("Failed to save token: " + e.args[1])
@@ -137,9 +164,9 @@ class SocialTokensModel(Model):
                 yield self.db.execute(
                     """
                         UPDATE `credential_tokens`
-                        SET `access_token`=%s, `expires_at`=%s,  `payload`=%s
-                        WHERE `credential`=%s AND `username`=%s AND `gamespace_id`=%s;
-                    """, access_token, expires_at, data_text, credential, username, gamespace_id)
+                        SET `access_token`=%s, `expires_at`=%s, `payload`=%s
+                        WHERE `merged_credential`=%s AND `gamespace_id`=%s;
+                    """, access_token, expires_at, data_text, merged, gamespace_id)
 
             except DatabaseError as e:
                 raise SocialTokensError("Failed to save token: " + e.args[1])

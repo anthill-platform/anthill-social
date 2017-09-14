@@ -36,6 +36,9 @@ class SteamSocialAPI(SocialAPI, SteamAPI):
 
         raise Return(user_info)
 
+    def has_friend_list(self):
+        return False
+
     @coroutine
     def import_social(self, gamespace, username, auth):
         raise NotImplementedError()

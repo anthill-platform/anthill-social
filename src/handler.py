@@ -21,20 +21,36 @@ class ConnectionsHandler(AuthenticatedHandler):
     @scoped()
     @coroutine
     def get(self):
-        profile_fields = filter(
-            bool, 
-            self.get_argument("profile_fields", "").split(","))
+
+        profile_fields = self.get_argument("profile_fields", None)
+
+        if profile_fields:
+
+            try:
+                profile_fields = ujson.loads(profile_fields)
+                profile_fields = validate_value(profile_fields, "json_list_of_strings")
+            except (KeyError, ValueError, ValidationError):
+                raise HTTPError(400, "Corrupted profile_fields")
 
         try:
-            connections = yield self.application.connections.get_connections_profiles(
+            friends = yield self.application.social.list_friends(
                 self.token.get(AccessToken.GAMESPACE),
                 self.token.account,
-                profile_fields)
-            
-        except ConnectionError as e:
-            raise HTTPError(e.code, e.message)
+                profile_fields=profile_fields)
 
-        self.dumps(connections)
+        except SocialAuthenticationRequired as e:
+            raise HTTPError(401, ujson.dumps({
+                "credential": e.credential,
+                "username": e.username
+            }))
+
+        except NoFriendsFound:
+            raise HTTPError(404, "No connections found")
+
+        except APIError as e:
+            raise HTTPError(e.code, e.body)
+
+        self.dumps(friends)
 
 
 class AccountConnectionHandler(AuthenticatedHandler):
@@ -149,30 +165,6 @@ class RejectConnectionHandler(AuthenticatedHandler):
                 gamespace, account_id, reject_account_id, key, notify=notify, authoritative=authoritative)
         except ConnectionError as e:
             raise HTTPError(500, e.message)
-
-
-class ExternalConnectionsHandler(AuthenticatedHandler):
-    @scoped()
-    @coroutine
-    def get(self):
-        try:
-            friends = yield self.application.social.list_friends(
-                self.token.get(AccessToken.GAMESPACE),
-                self.token.account)
-
-        except SocialAuthenticationRequired as e:
-            raise HTTPError(401, ujson.dumps({
-                "credential": e.credential,
-                "username": e.username
-            }))
-
-        except NoFriendsFound:
-            raise HTTPError(404, "No connections found")
-
-        except APIError as e:
-            raise HTTPError(e.code, e.body)
-
-        self.dumps(friends)
 
 
 class InternalHandler(object):

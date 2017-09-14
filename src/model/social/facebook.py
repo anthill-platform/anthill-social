@@ -57,6 +57,9 @@ class FacebookSocialAPI(SocialAPI, FacebookAPI):
         friends = yield self.call(gamespace, account_id, self.api_get_friends)
         raise Return(friends)
 
+    def has_friend_list(self):
+        return True
+
     @coroutine
     def get_social_profile(self, gamespace, username, account_id, env=None):
         user_info = yield self.call(

@@ -72,12 +72,10 @@ class GoogleSocialAPI(SocialAPI, GoogleAPI):
 
     @coroutine
     def list_friends(self, gamespace, account_id):
-        friends = yield self.call(
-            gamespace,
-            account_id,
-            self.api_get_friends)
+        raise NotImplementedError()
 
-        raise Return(friends)
+    def has_friend_list(self):
+        return False
 
     @coroutine
     def get_social_profile(self, gamespace, username, account_id, env=None):
