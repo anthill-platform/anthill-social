@@ -50,7 +50,9 @@ class ConnectionsHandler(AuthenticatedHandler):
         except APIError as e:
             raise HTTPError(e.code, e.body)
 
-        self.dumps(friends)
+        self.dumps({
+            "connections": friends
+        })
 
 
 class AccountConnectionHandler(AuthenticatedHandler):
