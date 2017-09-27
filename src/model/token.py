@@ -94,7 +94,7 @@ class SocialTokensModel(Model):
     def lookup_accounts(self, gamespace_id, credentials):
 
         if not len(credentials):
-            raise Return([])
+            raise Return({})
 
         try:
             tokens = yield self.db.query(
