@@ -14,6 +14,7 @@ from model.request import RequestsModel
 from model.social import SocialAPIModel
 from model.token import SocialTokensModel
 from model.group import GroupsModel
+from model.names import NamesModel
 
 import options as _opts
 import admin
@@ -41,9 +42,10 @@ class SocialServer(common.server.Server):
         self.connections = ConnectionsModel(self.db, self.cache, self.requests)
         self.social = SocialAPIModel(self, self.tokens, self.connections, self.cache)
         self.groups = GroupsModel(self.db, self.requests)
+        self.names = NamesModel(self.db, self.cache)
 
     def get_models(self):
-        return [self.tokens, self.requests, self.connections, self.groups]
+        return [self.tokens, self.requests, self.connections, self.groups, self.names]
 
     def get_admin(self):
         return {
@@ -72,7 +74,11 @@ class SocialServer(common.server.Server):
             (r"/group/([0-9]+)/approve/([0-9]+)", h.GroupApproveAccountJoinHandler),
             (r"/group/([0-9]+)/reject/([0-9]+)", h.GroupRejectAccountJoinHandler),
             (r"/group/([0-9]+)/invite/([0-9]+)", h.GroupInviteAccountJoinHandler),
-            (r"/group/([0-9]+)", h.GroupHandler)
+            (r"/group/([0-9]+)", h.GroupHandler),
+
+            (r"/names/acquire/(.*)", h.UniqueNamesAcquireHandler),
+            (r"/names/delete/(.*)", h.UniqueNamesDeleteHandler),
+            (r"/names/search/(.*)", h.UniqueNamesSearchHandler)
         ]
 
     def get_metadata(self):

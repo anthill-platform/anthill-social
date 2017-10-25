@@ -1,4 +1,3 @@
-
 import ujson
 
 from tornado.gen import coroutine, Return
@@ -15,6 +14,7 @@ from model.request import RequestError, RequestType, NoSuchRequest
 from model.connection import ConnectionError, ConnectionsModel
 from model.social import SocialNotFound, NoFriendsFound, SocialAuthenticationRequired
 from model.group import GroupError, GroupsModel, GroupFlags, NoSuchGroup, NoSuchParticipation, GroupJoinMethod
+from model.names import NameIsBusyError, NamesModelError
 
 
 class ConnectionsHandler(AuthenticatedHandler):
@@ -172,6 +172,40 @@ class RejectConnectionHandler(AuthenticatedHandler):
 class InternalHandler(object):
     def __init__(self, application):
         self.application = application
+
+    @coroutine
+    def acquire_name(self, gamespace, account, kind, name):
+        names = self.application.names
+
+        try:
+            yield names.acquire_name(gamespace, account, kind, name)
+        except NameIsBusyError:
+            raise InternalError(409, "Name is busy")
+        except NamesModelError as e:
+            raise InternalError(e.code, e.message)
+
+        raise Return("OK")
+
+    @coroutine
+    def check_name(self, gamespace, account, name):
+        names = self.application.names
+
+        try:
+            account_id = yield names.check_name(gamespace, account, name)
+        except NamesModelError as e:
+            raise InternalError(e.code, e.message)
+
+        raise Return(account_id)
+
+    @coroutine
+    def release_name(self, gamespace, account, kind):
+        names = self.application.names
+
+        try:
+            released = yield names.release_name(gamespace, account, kind)
+        except NamesModelError as e:
+            raise InternalError(e.code, e.message)
+        raise Return(released)
 
     @coroutine
     def attach_account(self, gamespace, credential, username, account, env=None, fetch_profile=True):
@@ -383,6 +417,78 @@ class SearchGroupsHandler(AuthenticatedHandler):
                 } for group in groups
             ]
         })
+
+
+class UniqueNamesAcquireHandler(AuthenticatedHandler):
+    @scoped(scopes=["names_write"])
+    @coroutine
+    def post(self, kind):
+        name = self.get_argument("name")
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account_id = self.token.account
+        names = self.application.names
+
+        try:
+            yield names.acquire_name(gamespace, account_id, kind, name)
+        except NameIsBusyError:
+            raise HTTPError(409, "Name is busy")
+        except NamesModelError as e:
+            raise HTTPError(e.code, e.message)
+
+
+class UniqueNamesSearchHandler(AuthenticatedHandler):
+    @scoped(scopes=["names"])
+    @coroutine
+    def get(self, kind):
+        query = self.get_argument("query")
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        names = self.application.names
+
+        request_profiles = self.get_argument("request_profiles", "false") == "true"
+        profile_fields = self.get_argument("profile_fields", None)
+
+        if profile_fields:
+
+            try:
+                profile_fields = ujson.loads(profile_fields)
+                profile_fields = validate_value(profile_fields, "json_list_of_strings")
+            except (KeyError, ValueError, ValidationError):
+                raise HTTPError(400, "Corrupted profile_fields")
+
+        try:
+            names = yield names.search_names(
+                gamespace, kind, query,
+                request_profiles=request_profiles, profile_fields=profile_fields)
+        except NamesModelError as e:
+            raise HTTPError(e.code, e.message)
+
+        self.dumps({
+            "names": [
+                {
+                    "account": name.account_id,
+                    "name": name.name,
+                    "profile": name.profile
+                }
+                for name in names
+            ]
+        })
+
+
+class UniqueNamesDeleteHandler(AuthenticatedHandler):
+    @scoped(scopes=["names_write"])
+    @coroutine
+    def delete(self, kind):
+
+        gamespace = self.token.get(AccessToken.GAMESPACE)
+        account_id = self.token.account
+        names = self.application.names
+
+        try:
+            yield names.release_name(gamespace, account_id, kind)
+        except NamesModelError as e:
+            raise HTTPError(e.code, e.message)
 
 
 class GroupHandler(AuthenticatedHandler):
