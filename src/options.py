@@ -9,7 +9,7 @@ define("host",
        type=str)
 
 define("listen",
-       default="unix:/usr/local/var/run/anthill/dev_social.sock",
+       default="port:9514",
        help="Socket to listen. Could be a port number (port:N), or a unix domain socket (unix:PATH)",
        type=str)
 
