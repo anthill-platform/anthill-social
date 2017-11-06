@@ -120,7 +120,7 @@ class NamesModel(Model):
     @validate(gamespace_id="int", account_id="int", kind="str_name", name="str")
     def acquire_name(self, gamespace_id, account_id, kind, name):
         try:
-            yield self.db.execute(
+            updated = yield self.db.execute(
                 """
                 INSERT INTO `unique_names`
                 (`gamespace_id`, `account_id`, `kind`, `name`)
@@ -128,10 +128,11 @@ class NamesModel(Model):
                 ON DUPLICATE KEY 
                 UPDATE `name`=VALUES(`name`);
                 """, gamespace_id, account_id, kind, name)
-        except DuplicateError:
-            raise NameIsBusyError()
         except DatabaseError as e:
             raise NamesModelError(500, e.args[1])
+
+        if not updated:
+            raise NameIsBusyError()
 
     @coroutine
     @validate(gamespace_id="int", account_id="int", kind="str_name")
