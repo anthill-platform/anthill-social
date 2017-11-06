@@ -187,11 +187,11 @@ class InternalHandler(object):
         raise Return("OK")
 
     @coroutine
-    def check_name(self, gamespace, account, name):
+    def check_name(self, gamespace, kind, name):
         names = self.application.names
 
         try:
-            account_id = yield names.check_name(gamespace, account, name)
+            account_id = yield names.check_name(gamespace, kind, name)
         except NamesModelError as e:
             raise InternalError(e.code, e.message)
 
