@@ -54,6 +54,8 @@ class SocialServer(common.server.Server):
 
     def get_handlers(self):
         return [
+            (r"/connections/incoming", h.ConnectionIncomingRequestsHandler),
+            (r"/connections/outgoing", h.ConnectionOutgoingRequestsHandler),
             (r"/connections", h.ConnectionsHandler),
             (r"/connection/([0-9]+)/approve", h.ApproveConnectionHandler),
             (r"/connection/([0-9]+)/reject", h.RejectConnectionHandler),

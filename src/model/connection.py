@@ -104,14 +104,14 @@ class ConnectionsModel(profile.ProfilesModel):
 
     @coroutine
     @validate(gamespace_id="int", account_id="int", target_account="int", approval="bool", notify="json_dict",
-              authoritative="bool")
+              authoritative="bool", payload="json_dict")
     def request_connection(self, gamespace_id, account_id, target_account, approval=True, notify=None,
-                           authoritative=False):
+                           authoritative=False, payload=None):
 
         if approval:
             try:
                 key = yield self.requests.create_request(
-                    gamespace_id, account_id, RequestType.ACCOUNT, target_account)
+                    gamespace_id, account_id, RequestType.ACCOUNT, target_account, payload)
             except RequestError as e:
                 raise ConnectionError(500, e.message)
 

@@ -55,6 +55,56 @@ class ConnectionsHandler(AuthenticatedHandler):
         })
 
 
+class ConnectionIncomingRequestsHandler(AuthenticatedHandler):
+    @scoped()
+    @coroutine
+    def get(self):
+
+        requests = self.application.requests
+
+        try:
+            requests = yield requests.list_incoming_account_requests(
+                self.token.get(AccessToken.GAMESPACE),
+                self.token.account)
+
+        except RequestError as e:
+            raise HTTPError(401, e.message)
+
+        result = {
+            "requests": [
+                r.dump()
+                for r in requests
+            ]
+        }
+
+        self.dumps(result)
+
+
+class ConnectionOutgoingRequestsHandler(AuthenticatedHandler):
+    @scoped()
+    @coroutine
+    def get(self):
+
+        requests = self.application.requests
+
+        try:
+            requests = yield requests.list_outgoing_account_requests(
+                self.token.get(AccessToken.GAMESPACE),
+                self.token.account)
+
+        except RequestError as e:
+            raise HTTPError(401, e.message)
+
+        result = {
+            "requests": [
+                r.dump()
+                for r in requests
+            ]
+        }
+
+        self.dumps(result)
+
+
 class AccountConnectionHandler(AuthenticatedHandler):
     @scoped()
     @coroutine
@@ -90,6 +140,15 @@ class AccountConnectionHandler(AuthenticatedHandler):
         approval = self.get_argument("approval", "true") == "true"
         gamespace = self.token.get(AccessToken.GAMESPACE)
 
+        payload_str = self.get_argument("payload", None)
+        if payload_str:
+            try:
+                payload = ujson.loads(payload_str)
+            except (KeyError, ValueError):
+                raise HTTPError(400, "payload is corrupted")
+        else:
+            payload = None
+
         notify_str = self.get_argument("notify", None)
         if notify_str:
             try:
@@ -108,7 +167,7 @@ class AccountConnectionHandler(AuthenticatedHandler):
         try:
             result = yield self.application.connections.request_connection(
                 gamespace, self.token.account, target_account, approval=approval, notify=notify,
-                authoritative=authoritative)
+                authoritative=authoritative, payload=payload)
         except ConnectionError as e:
             raise HTTPError(e.code, e.message)
 

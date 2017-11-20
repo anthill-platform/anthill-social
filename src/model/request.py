@@ -32,6 +32,14 @@ class RequestAdapter(object):
         self.key = data.get("request_key")
         self.payload = data.get("request_payload")
 
+    def dump(self):
+        return {
+            "type": str(self.type),
+            "object": self.object,
+            "key": self.key,
+            "payload": self.payload
+        }
+
 
 class RequestType(Enum):
     ACCOUNT = 'account'
@@ -105,6 +113,36 @@ class RequestsModel(profile.ProfilesModel):
 
         except DatabaseError as e:
             raise RequestError(500, "Failed to delete requests: " + str(e.args[1]))
+
+    @coroutine
+    @validate(gamespace_id="int", account_id="int")
+    def list_outgoing_account_requests(self, gamespace_id, account_id):
+        try:
+            requests = yield self.db.query("""
+                SELECT *
+                FROM `requests`
+                WHERE `gamespace_id`=%s AND `account_id`=%s;
+            """, gamespace_id, account_id)
+
+        except DatabaseError as e:
+            raise RequestError(500, "Failed to list requests: " + str(e.args[1]))
+
+        raise Return(map(RequestAdapter, requests))
+
+    @coroutine
+    @validate(gamespace_id="int", account_id="int")
+    def list_incoming_account_requests(self, gamespace_id, account_id):
+        try:
+            requests = yield self.db.query("""
+                SELECT *
+                FROM `requests`
+                WHERE `gamespace_id`=%s AND `request_type`=%s AND `request_object`=%s;
+            """, gamespace_id, RequestType.ACCOUNT, account_id)
+
+        except DatabaseError as e:
+            raise RequestError(500, "Failed to list requests: " + str(e.args[1]))
+
+        raise Return(map(RequestAdapter, requests))
 
     @coroutine
     @validate(gamespace_id="int", account_id="int", request_type=RequestType, request_object="int")
