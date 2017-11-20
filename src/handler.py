@@ -55,7 +55,7 @@ class ConnectionsHandler(AuthenticatedHandler):
         })
 
 
-class ConnectionIncomingRequestsHandler(AuthenticatedHandler):
+class IncomingRequestsHandler(AuthenticatedHandler):
     @scoped()
     @coroutine
     def get(self):
@@ -80,7 +80,7 @@ class ConnectionIncomingRequestsHandler(AuthenticatedHandler):
         self.dumps(result)
 
 
-class ConnectionOutgoingRequestsHandler(AuthenticatedHandler):
+class OutgoingRequestsHandler(AuthenticatedHandler):
     @scoped()
     @coroutine
     def get(self):
