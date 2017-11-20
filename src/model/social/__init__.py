@@ -86,25 +86,25 @@ class SocialAPIModel(object):
     @coroutine
     def list_friends(self, gamespace, account_id, profile_fields=None):
 
+        calls = {}
+
         try:
             account_tokens = yield self.tokens.list_tokens(
                 gamespace,
                 account_id)
 
         except NoSuchToken:
-            raise NoFriendsFound()
+            pass
+        else:
+            for account_token in account_tokens:
+                credential_type = account_token.credential
 
-        calls = {}
+                api = self.api(credential_type)
 
-        for account_token in account_tokens:
-            credential_type = account_token.credential
+                if not api.has_friend_list():
+                    continue
 
-            api = self.api(credential_type)
-
-            if not api.has_friend_list():
-                continue
-
-            calls[credential_type] = api.list_friends(gamespace, account_id)
+                calls[credential_type] = api.list_friends(gamespace, account_id)
 
         @cached(kv=self.cache,
                 h=lambda: "friends:" + str(gamespace) + ":" + str(account_id) +
@@ -113,20 +113,26 @@ class SocialAPIModel(object):
                 json=True)
         @coroutine
         def do_request():
-            api_friends = yield multi(calls, quiet_exceptions=(APIError,))
 
-            friends_result = {}
+            if calls:
+                friends_result = {}
 
-            for credential_type_, friends_ in api_friends.iteritems():
-                for username, friend in friends_.iteritems():
-                    friends_result[credential_type_ + ":" + str(username)] = friend
+                api_friends = yield multi(calls, quiet_exceptions=(APIError,))
 
-            try:
-                credentials_to_accounts = yield self.tokens.lookup_accounts(gamespace, friends_result.keys())
-            except SocialTokensError as e:
-                raise APIError(500, e.message)
+                for credential_type_, friends_ in api_friends.iteritems():
+                    for username, friend in friends_.iteritems():
+                        friends_result[credential_type_ + ":" + str(username)] = friend
 
-            account_ids = credentials_to_accounts.values()
+                try:
+                    credentials_to_accounts = yield self.tokens.lookup_accounts(gamespace, friends_result.keys())
+                except SocialTokensError as e:
+                    raise APIError(500, e.message)
+
+                account_ids = credentials_to_accounts.values()
+            else:
+                credentials_to_accounts = {}
+                account_ids = []
+
             internal_connections = yield self.connections.list_connections(account_id)
 
             account_ids.extend(internal_connections)
