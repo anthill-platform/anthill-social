@@ -9,6 +9,7 @@ import ujson
 from common import Enum
 from common.validate import validate
 from common.database import DatabaseError, DuplicateError
+from common.internal import Internal, InternalError
 
 
 class RequestError(Exception):
@@ -25,20 +26,44 @@ class NoSuchRequest(Exception):
 
 
 class RequestAdapter(object):
-    def __init__(self, data):
+    def __init__(self, data, current_account_id=None):
         self.type = RequestType(data.get("request_type", RequestType.ACCOUNT))
-        self.account = data.get("account_id")
-        self.object = data.get("request_object")
+        self.account = str(data.get("account_id"))
+        self.object = str(data.get("request_object"))
+        self.profile = None
         self.key = data.get("request_key")
         self.payload = data.get("request_payload")
 
+        # apparently, mysql returns LONGTEXT field type instead of JSON in case of union calls
+        if isinstance(self.payload, (str, unicode)):
+            self.payload = ujson.loads(self.payload)
+
+        self.kind = RequestKind(RequestKind.OUTGOING
+                                if current_account_id == self.account
+                                else RequestKind.INCOMING)
+
     def dump(self):
-        return {
+        result = {
             "type": str(self.type),
+            "kind": str(self.kind),
+            "sender": self.account,
             "object": self.object,
             "key": self.key,
             "payload": self.payload
         }
+
+        if self.profile:
+            result["profile"] = self.profile
+
+        return result
+
+
+class RequestAdapterMapper(object):
+    def __init__(self, account_id):
+        self.account_id = account_id
+
+    def __call__(self, data):
+        return RequestAdapter(data, current_account_id=self.account_id)
 
 
 class RequestType(Enum):
@@ -50,6 +75,15 @@ class RequestType(Enum):
     }
 
 
+class RequestKind(Enum):
+    INCOMING = 'incoming'
+    OUTGOING = 'outgoing'
+
+    ALL = {
+        INCOMING, OUTGOING
+    }
+
+
 class RequestsModel(profile.ProfilesModel):
 
     # a week
@@ -57,6 +91,7 @@ class RequestsModel(profile.ProfilesModel):
 
     def __init__(self, db, cache):
         super(RequestsModel, self).__init__(db, cache)
+        self.internal = Internal()
 
     def get_setup_db(self):
         return self.db
@@ -114,12 +149,20 @@ class RequestsModel(profile.ProfilesModel):
         except DatabaseError as e:
             raise RequestError(500, "Failed to delete requests: " + str(e.args[1]))
 
+    def __fetch_profile__(self, gamespace_id, account_ids, profile_fields):
+        return self.internal.request(
+            "profile", "mass_profiles",
+            accounts=list(set(account_ids)),
+            gamespace=gamespace_id,
+            action="get_public",
+            profile_fields=profile_fields)
+
     @coroutine
-    @validate(gamespace_id="int", account_id="int")
-    def list_outgoing_account_requests(self, gamespace_id, account_id):
+    @validate(gamespace_id="int", account_id="int", profile_fields="json_list_of_strings")
+    def list_outgoing_account_requests(self, gamespace_id, account_id, profile_fields=None):
         try:
-            requests = yield self.db.query("""
-                SELECT *
+            data = yield self.db.query("""
+                SELECT `account_id`, `request_type`, `request_object`, `request_key`, `request_payload`
                 FROM `requests`
                 WHERE `gamespace_id`=%s AND `account_id`=%s;
             """, gamespace_id, account_id)
@@ -127,14 +170,27 @@ class RequestsModel(profile.ProfilesModel):
         except DatabaseError as e:
             raise RequestError(500, "Failed to list requests: " + str(e.args[1]))
 
-        raise Return(map(RequestAdapter, requests))
+        requests = map(RequestAdapterMapper(account_id), data)
+
+        if profile_fields is not None:
+            account_ids = [r.object for r in requests]
+
+            try:
+                profiles = yield self.__fetch_profile__(gamespace_id, account_ids, profile_fields)
+            except InternalError as e:
+                raise RequestError(e.code, e.message)
+
+            for r in requests:
+                r.profile = profiles.get(str(r.object), None)
+
+        raise Return(requests)
 
     @coroutine
-    @validate(gamespace_id="int", account_id="int")
-    def list_incoming_account_requests(self, gamespace_id, account_id):
+    @validate(gamespace_id="int", account_id="int", profile_fields="json_list_of_strings")
+    def list_incoming_account_requests(self, gamespace_id, account_id, profile_fields=None):
         try:
-            requests = yield self.db.query("""
-                SELECT *
+            data = yield self.db.query("""
+                SELECT `account_id`, `request_type`, `request_object`, `request_key`, `request_payload`
                 FROM `requests`
                 WHERE `gamespace_id`=%s AND `request_type`=%s AND `request_object`=%s;
             """, gamespace_id, RequestType.ACCOUNT, account_id)
@@ -142,7 +198,54 @@ class RequestsModel(profile.ProfilesModel):
         except DatabaseError as e:
             raise RequestError(500, "Failed to list requests: " + str(e.args[1]))
 
-        raise Return(map(RequestAdapter, requests))
+        requests = map(RequestAdapterMapper(account_id), data)
+
+        if profile_fields is not None:
+            account_ids = [r.account for r in requests]
+
+            try:
+                profiles = yield self.__fetch_profile__(gamespace_id, account_ids, profile_fields)
+            except InternalError as e:
+                raise RequestError(e.code, e.message)
+
+            for r in requests:
+                r.profile = profiles.get(str(r.account), None)
+
+        raise Return(requests)
+
+    @coroutine
+    @validate(gamespace_id="int", account_id="int", profile_fields="json_list_of_strings")
+    def list_total_account_requests(self, gamespace_id, account_id, profile_fields=None):
+        try:
+            data = yield self.db.query("""
+                SELECT `account_id`, `request_type`, `request_object`, `request_key`, `request_payload`
+                FROM `requests`
+                WHERE `gamespace_id`=%s AND `request_type`=%s AND `request_object`=%s
+                
+                UNION
+                
+                SELECT `account_id`, `request_type`, `request_object`, `request_key`, `request_payload`
+                FROM `requests`
+                WHERE `gamespace_id`=%s AND `account_id`=%s;
+            """, gamespace_id, RequestType.ACCOUNT, account_id, gamespace_id, account_id)
+
+        except DatabaseError as e:
+            raise RequestError(500, "Failed to list requests: " + str(e.args[1]))
+
+        requests = map(RequestAdapterMapper(account_id), data)
+
+        if profile_fields is not None:
+            account_ids = [r.account for r in requests]
+
+            try:
+                profiles = yield self.__fetch_profile__(gamespace_id, account_ids, profile_fields)
+            except InternalError as e:
+                raise RequestError(e.code, e.message)
+
+            for r in requests:
+                r.profile = profiles.get(str(r.account), None)
+
+        raise Return(requests)
 
     @coroutine
     @validate(gamespace_id="int", account_id="int", request_type=RequestType, request_object="int")

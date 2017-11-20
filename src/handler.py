@@ -62,10 +62,55 @@ class IncomingRequestsHandler(AuthenticatedHandler):
 
         requests = self.application.requests
 
+        profile_fields = self.get_argument("profile_fields", None)
+
+        if profile_fields:
+
+            try:
+                profile_fields = ujson.loads(profile_fields)
+                profile_fields = validate_value(profile_fields, "json_list_of_strings")
+            except (KeyError, ValueError, ValidationError):
+                raise HTTPError(400, "Corrupted profile_fields")
+
         try:
             requests = yield requests.list_incoming_account_requests(
                 self.token.get(AccessToken.GAMESPACE),
-                self.token.account)
+                self.token.account, profile_fields=profile_fields)
+
+        except RequestError as e:
+            raise HTTPError(401, e.message)
+
+        result = {
+            "requests": [
+                r.dump()
+                for r in requests
+            ]
+        }
+
+        self.dumps(result)
+
+
+class RequestsHandler(AuthenticatedHandler):
+    @scoped()
+    @coroutine
+    def get(self):
+
+        requests = self.application.requests
+
+        profile_fields = self.get_argument("profile_fields", None)
+
+        if profile_fields:
+
+            try:
+                profile_fields = ujson.loads(profile_fields)
+                profile_fields = validate_value(profile_fields, "json_list_of_strings")
+            except (KeyError, ValueError, ValidationError):
+                raise HTTPError(400, "Corrupted profile_fields")
+
+        try:
+            requests = yield requests.list_total_account_requests(
+                self.token.get(AccessToken.GAMESPACE),
+                self.token.account, profile_fields=profile_fields)
 
         except RequestError as e:
             raise HTTPError(401, e.message)
@@ -87,10 +132,20 @@ class OutgoingRequestsHandler(AuthenticatedHandler):
 
         requests = self.application.requests
 
+        profile_fields = self.get_argument("profile_fields", None)
+
+        if profile_fields:
+
+            try:
+                profile_fields = ujson.loads(profile_fields)
+                profile_fields = validate_value(profile_fields, "json_list_of_strings")
+            except (KeyError, ValueError, ValidationError):
+                raise HTTPError(400, "Corrupted profile_fields")
+
         try:
             requests = yield requests.list_outgoing_account_requests(
                 self.token.get(AccessToken.GAMESPACE),
-                self.token.account)
+                self.token.account, profile_fields=profile_fields)
 
         except RequestError as e:
             raise HTTPError(401, e.message)

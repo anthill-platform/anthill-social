@@ -54,6 +54,7 @@ class SocialServer(common.server.Server):
 
     def get_handlers(self):
         return [
+            (r"/requests", h.RequestsHandler),
             (r"/requests/incoming", h.IncomingRequestsHandler),
             (r"/requests/outgoing", h.OutgoingRequestsHandler),
 
