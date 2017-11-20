@@ -60,7 +60,7 @@ class RequestAdapter(object):
 
 class RequestAdapterMapper(object):
     def __init__(self, account_id):
-        self.account_id = account_id
+        self.account_id = str(account_id)
 
     def __call__(self, data):
         return RequestAdapter(data, current_account_id=self.account_id)
