@@ -85,26 +85,24 @@ class SocialAPIModel(object):
 
     @coroutine
     def list_friends(self, gamespace, account_id, profile_fields=None):
-
-        calls = {}
-
         try:
             account_tokens = yield self.tokens.list_tokens(
                 gamespace,
                 account_id)
 
-        except NoSuchToken:
-            pass
-        else:
-            for account_token in account_tokens:
-                credential_type = account_token.credential
+        except SocialTokensError as e:
+            raise APIError(500, e.message)
 
-                api = self.api(credential_type)
+        calls = {}
 
-                if not api.has_friend_list():
-                    continue
+        for account_token in account_tokens:
+            credential_type = account_token.credential
+            api = self.api(credential_type)
 
-                calls[credential_type] = api.list_friends(gamespace, account_id)
+            if not api.has_friend_list():
+                continue
+
+            calls[credential_type] = api.list_friends(gamespace, account_id)
 
         @cached(kv=self.cache,
                 h=lambda: "friends:" + str(gamespace) + ":" + str(account_id) +

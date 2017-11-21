@@ -126,9 +126,6 @@ class SocialTokensModel(Model):
         except DatabaseError as e:
             raise SocialTokensError("Failed get tokens: " + e.args[1])
 
-        if not tokens:
-            raise NoSuchToken()
-
         raise Return(map(SocialTokenAdapter, tokens))
 
     @coroutine
