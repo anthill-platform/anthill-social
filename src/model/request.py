@@ -42,6 +42,13 @@ class RequestAdapter(object):
                                 if current_account_id == self.account
                                 else RequestKind.INCOMING)
 
+        if self.kind == RequestKind.OUTGOING:
+            self.remote_object = self.object
+        elif self.kind == RequestKind.INCOMING:
+            self.remote_object = self.account
+        else:
+            self.remote_object = None
+
     def dump(self):
         result = {
             "type": str(self.type),
@@ -235,7 +242,7 @@ class RequestsModel(profile.ProfilesModel):
         requests = map(RequestAdapterMapper(account_id), data)
 
         if profile_fields is not None:
-            account_ids = [r.account for r in requests]
+            account_ids = [r.remote_object for r in requests if r.remote_object]
 
             try:
                 profiles = yield self.__fetch_profile__(gamespace_id, account_ids, profile_fields)
