@@ -250,7 +250,7 @@ class RequestsModel(profile.ProfilesModel):
                 raise RequestError(e.code, e.message)
 
             for r in requests:
-                r.profile = profiles.get(str(r.account), None)
+                r.profile = profiles.get(str(r.remote_object), None)
 
         raise Return(requests)
 
