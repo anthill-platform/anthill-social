@@ -44,9 +44,8 @@ class NamesModel(Model):
         return ["unique_names"]
 
     @coroutine
-    @validate(gamespace_id="int", kind="str_name", query="str",
-              request_profiles="bool", profile_fields="json_list_of_strings")
-    def search_names(self, gamespace_id, kind, query, request_profiles=False, profile_fields=None, db=None):
+    @validate(gamespace_id="int", kind="str_name", query="str", profile_fields="json_list_of_strings")
+    def search_names(self, gamespace_id, kind, query, profile_fields=None, db=None):
 
         words = re.findall(r'[^\s]+', query)
 
@@ -72,12 +71,19 @@ class NamesModel(Model):
 
         names = map(NameAdapter, names)
 
-        if request_profiles:
-            account_ids = [name.account_id for name in names]
+        if profile_fields is not None:
+            account_ids = [str(name.account_id) for name in names]
+
+            def _hash():
+                h = hashlib.sha256()
+                for s in profile_fields:
+                    h.update(s + ",")
+                for s in account_ids:
+                    h.update(s + ",")
+                return h.hexdigest()
 
             @cached(kv=self.cache,
-                    h=lambda: "names:" + str(gamespace_id) + ":" + str(kind) +
-                              ((":" + hashlib.sha256(",".join(profile_fields)).hexdigest()) if profile_fields else ""),
+                    h=lambda: "names:" + str(gamespace_id) + ":" + str(kind) + ":" + _hash(),
                     ttl=20,
                     json=True)
             def do_request():

@@ -560,7 +560,6 @@ class UniqueNamesSearchHandler(AuthenticatedHandler):
         gamespace = self.token.get(AccessToken.GAMESPACE)
         names = self.application.names
 
-        request_profiles = self.get_argument("request_profiles", "false") == "true"
         profile_fields = self.get_argument("profile_fields", None)
 
         if profile_fields:
@@ -574,7 +573,7 @@ class UniqueNamesSearchHandler(AuthenticatedHandler):
         try:
             names = yield names.search_names(
                 gamespace, kind, query,
-                request_profiles=request_profiles, profile_fields=profile_fields)
+                profile_fields=profile_fields)
         except NamesModelError as e:
             raise HTTPError(e.code, e.message)
 
