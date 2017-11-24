@@ -29,6 +29,7 @@ class RequestAdapter(object):
     def __init__(self, data, current_account_id=None):
         self.type = RequestType(data.get("request_type", RequestType.ACCOUNT))
         self.account = str(data.get("account_id"))
+        self.time = data.get("request_time")
         self.object = str(data.get("request_object"))
         self.profile = None
         self.key = data.get("request_key")
@@ -53,6 +54,7 @@ class RequestAdapter(object):
         result = {
             "type": str(self.type),
             "kind": str(self.kind),
+            "time": str(self.time),
             "sender": self.account,
             "object": self.object,
             "key": self.key,
@@ -125,6 +127,7 @@ class RequestsModel(profile.ProfilesModel):
             if existing_request:
                 raise Return(existing_request["request_key"])
 
+            request_time = datetime.datetime.now()
             expire = datetime.datetime.now() + datetime.timedelta(seconds=RequestsModel.REQUEST_EXPIRE_IN)
             key = str(uuid.uuid4())
 
@@ -132,10 +135,10 @@ class RequestsModel(profile.ProfilesModel):
                 yield db.execute(
                     """
                     INSERT INTO `requests`
-                    (`account_id`, `gamespace_id`, `request_type`, `request_object`, `request_expire`, 
+                    (`account_id`, `gamespace_id`, `request_type`, `request_object`, `request_time`, `request_expire`, 
                         `request_key`, `request_payload`)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s);
-                    """, account_id, gamespace_id, str(request_type), request_object, expire, key,
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+                    """, account_id, gamespace_id, str(request_type), request_object, request_time, expire, key,
                     ujson.dumps(request_payload))
             except DuplicateError:
                 raise RequestError(409, "Request already exists")
@@ -169,7 +172,7 @@ class RequestsModel(profile.ProfilesModel):
     def list_outgoing_account_requests(self, gamespace_id, account_id, profile_fields=None):
         try:
             data = yield self.db.query("""
-                SELECT `account_id`, `request_type`, `request_object`, `request_key`, `request_payload`
+                SELECT `account_id`, `request_type`, `request_object`, `request_time`, `request_key`, `request_payload`
                 FROM `requests`
                 WHERE `gamespace_id`=%s AND `account_id`=%s;
             """, gamespace_id, account_id)
@@ -197,7 +200,7 @@ class RequestsModel(profile.ProfilesModel):
     def list_incoming_account_requests(self, gamespace_id, account_id, profile_fields=None):
         try:
             data = yield self.db.query("""
-                SELECT `account_id`, `request_type`, `request_object`, `request_key`, `request_payload`
+                SELECT `account_id`, `request_type`, `request_object`, `request_time`, `request_key`, `request_payload`
                 FROM `requests`
                 WHERE `gamespace_id`=%s AND `request_type`=%s AND `request_object`=%s;
             """, gamespace_id, RequestType.ACCOUNT, account_id)
@@ -225,13 +228,13 @@ class RequestsModel(profile.ProfilesModel):
     def list_total_account_requests(self, gamespace_id, account_id, profile_fields=None):
         try:
             data = yield self.db.query("""
-                SELECT `account_id`, `request_type`, `request_object`, `request_key`, `request_payload`
+                SELECT `account_id`, `request_type`, `request_object`, `request_time`, `request_key`, `request_payload`
                 FROM `requests`
                 WHERE `gamespace_id`=%s AND `request_type`=%s AND `request_object`=%s
                 
                 UNION
                 
-                SELECT `account_id`, `request_type`, `request_object`, `request_key`, `request_payload`
+                SELECT `account_id`, `request_type`, `request_object`, `request_time`, `request_key`, `request_payload`
                 FROM `requests`
                 WHERE `gamespace_id`=%s AND `account_id`=%s;
             """, gamespace_id, RequestType.ACCOUNT, account_id, gamespace_id, account_id)

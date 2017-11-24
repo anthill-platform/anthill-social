@@ -176,11 +176,9 @@ class AccountConnectionHandler(AuthenticatedHandler):
         else:
             notify = None
 
-        authoritative = self.token.has_scope("message_authoritative")
-
         try:
             yield self.application.connections.delete(
-                gamespace, self.token.account, target_account, notify=notify, authoritative=authoritative)
+                gamespace, self.token.account, target_account, notify=notify)
 
         except ConnectionError as e:
             raise HTTPError(e.code, e.message)
@@ -213,8 +211,6 @@ class AccountConnectionHandler(AuthenticatedHandler):
         else:
             notify = None
 
-        authoritative = self.token.has_scope("message_authoritative")
-
         if not approval and not self.token.has_scope(ConnectionsModel.APPROVAL_SCOPE):
             raise HTTPError(403, "Scope '{0}' is required if approval is disabled".format(
                 ConnectionsModel.APPROVAL_SCOPE))
@@ -222,7 +218,7 @@ class AccountConnectionHandler(AuthenticatedHandler):
         try:
             result = yield self.application.connections.request_connection(
                 gamespace, self.token.account, target_account, approval=approval, notify=notify,
-                authoritative=authoritative, payload=payload)
+                payload=payload)
         except ConnectionError as e:
             raise HTTPError(e.code, e.message)
 
@@ -246,8 +242,6 @@ class ApproveConnectionHandler(AuthenticatedHandler):
                 raise HTTPError(400, "Notify is corrupted")
         else:
             notify = None
-
-        authoritative = self.token.has_scope("message_authoritative")
 
         try:
             yield self.application.connections.approve_connection(
@@ -274,11 +268,9 @@ class RejectConnectionHandler(AuthenticatedHandler):
         else:
             notify = None
 
-        authoritative = self.token.has_scope("message_authoritative")
-
         try:
             yield self.application.connections.reject_connection(
-                gamespace, account_id, reject_account_id, key, notify=notify, authoritative=authoritative)
+                gamespace, account_id, reject_account_id, key, notify=notify)
         except ConnectionError as e:
             raise HTTPError(500, e.message)
 
