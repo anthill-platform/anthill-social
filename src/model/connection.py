@@ -115,7 +115,7 @@ class ConnectionsModel(profile.ProfilesModel):
             except RequestError as e:
                 raise ConnectionError(500, e.message)
 
-            if notify:
+            if notify is not None:
                 notify.update({
                     "key": key
                 })
@@ -134,7 +134,7 @@ class ConnectionsModel(profile.ProfilesModel):
             except ConnectionError as e:
                 raise ConnectionError(500, e.message)
 
-            if notify:
+            if notify is not None:
                 yield self.__send_message__(
                     gamespace_id, "user", str(target_account), account_id,
                     ConnectionsModel.MESSAGE_CONNECTION_CREATED, notify, ["remove_delivered"],
