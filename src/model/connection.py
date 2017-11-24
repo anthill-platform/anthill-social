@@ -98,7 +98,7 @@ class ConnectionsModel(profile.ProfilesModel):
 
         if notify is not None:
             yield self.__send_message__(
-                gamespace_id, "user", str(request.object), reject_account_id,
+                gamespace_id, "user", str(request.account), account_id,
                 ConnectionsModel.MESSAGE_CONNECTION_REJECTED, notify, ["remove_delivered"],
                 authoritative=True)
 
