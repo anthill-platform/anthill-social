@@ -4,7 +4,7 @@ import datetime
 from tornado.gen import coroutine, Return
 
 from common.social import APIError
-from common.social.facebook import FacebookAPI, FacebookPrivateKey
+from common.social.apis import FacebookAPI
 
 from .. social import SocialAPI, SocialAuthenticationRequired
 from .. token import NoSuchToken

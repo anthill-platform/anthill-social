@@ -3,7 +3,7 @@ from tornado.gen import coroutine, Return
 import datetime
 
 from common.social import APIError
-from common.social.vk import VKAPI
+from common.social.apis import VKAPI
 
 from .. social import SocialAPI, SocialAuthenticationRequired
 from .. token import NoSuchToken

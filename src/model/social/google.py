@@ -3,7 +3,7 @@ from tornado.gen import coroutine, Return
 import datetime
 
 from common.social import APIError
-from common.social.google import GoogleAPI, GooglePrivateKey
+from common.social.apis import GoogleAPI
 
 from .. social import SocialAPI, SocialAuthenticationRequired
 from .. token import NoSuchToken
