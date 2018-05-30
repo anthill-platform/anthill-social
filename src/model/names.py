@@ -43,6 +43,27 @@ class NamesModel(Model):
     def get_setup_tables(self):
         return ["unique_names"]
 
+    def has_delete_account_event(self):
+        return True
+
+    @coroutine
+    def accounts_deleted(self, gamespace, accounts, gamespace_only):
+        try:
+            if gamespace_only:
+                yield self.db.execute(
+                    """
+                        DELETE FROM `unique_names`
+                        WHERE `gamespace_id`=%s AND `account_id` IN %s;
+                    """, gamespace, accounts)
+            else:
+                yield self.db.execute(
+                    """
+                        DELETE FROM `unique_names`
+                        WHERE `account_id` IN %s;
+                    """, accounts)
+        except DatabaseError as e:
+            raise NamesModelError(500, "Failed to delete unique names: " + e.args[1])
+
     @coroutine
     @validate(gamespace_id="int", kind="str_name", query="str", profile_fields="json_list_of_strings")
     def search_names(self, gamespace_id, kind, query, profile_fields=None, db=None):

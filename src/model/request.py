@@ -111,6 +111,38 @@ class RequestsModel(profile.ProfilesModel):
     def get_setup_events(self):
         return ["requests_expiration"]
 
+    def has_delete_account_event(self):
+        return True
+
+    @coroutine
+    def accounts_deleted(self, gamespace, accounts, gamespace_only):
+        try:
+            with (yield self.db.acquire()) as db:
+                if gamespace_only:
+                    yield db.execute(
+                        """
+                            DELETE FROM `requests`
+                            WHERE `gamespace_id`=%s AND `account_id` IN %s;
+                        """, gamespace, accounts)
+                    yield db.execute(
+                        """
+                            DELETE FROM `requests`
+                            WHERE `gamespace_id`=%s AND `request_type`=%s AND `request_object` IN %s;
+                        """, gamespace, RequestType.ACCOUNT, accounts)
+                else:
+                    yield db.execute(
+                        """
+                            DELETE FROM `requests`
+                            WHERE `account_id` IN %s;
+                        """, accounts)
+                    yield db.execute(
+                        """
+                            DELETE FROM `requests`
+                            WHERE `request_type`=%s AND `request_object` IN %s;
+                        """, RequestType.ACCOUNT, accounts)
+        except DatabaseError as e:
+            raise RequestError(500, "Failed to delete requests: " + e.args[1])
+
     @coroutine
     @validate(gamespace_id="int", account_id="int", request_type='str_name', request_object="int",
               request_payload="json")

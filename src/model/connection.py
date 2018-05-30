@@ -40,6 +40,23 @@ class ConnectionsModel(profile.ProfilesModel):
     def get_setup_tables(self):
         return ["account_connections"]
 
+    def has_delete_account_event(self):
+        return True
+
+    @coroutine
+    def accounts_deleted(self, gamespace, accounts, gamespace_only):
+        if gamespace_only:
+            return
+
+        try:
+            yield self.db.execute(
+                """
+                    DELETE FROM `account_connections`
+                    WHERE `account_id` IN %s OR `account_connection` IN %s;
+                """, accounts, accounts)
+        except DatabaseError as e:
+            raise ConnectionError(500, "Failed to delete user connections: " + e.args[1])
+
     @coroutine
     @validate(account_id="int", target_account="int")
     def create(self, account_id, target_account):

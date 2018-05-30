@@ -261,6 +261,27 @@ class GroupsModel(Model):
     def get_setup_tables(self):
         return ["groups", "group_participants"]
 
+    def has_delete_account_event(self):
+        return True
+
+    @coroutine
+    def accounts_deleted(self, gamespace, accounts, gamespace_only):
+        try:
+            if gamespace_only:
+                yield self.db.execute(
+                    """
+                        DELETE FROM `group_participants`
+                        WHERE `gamespace_id`=%s AND `account_id` IN %s;
+                    """, gamespace, accounts)
+            else:
+                yield self.db.execute(
+                    """
+                        DELETE FROM `group_participants`
+                        WHERE `account_id` IN %s;
+                    """, accounts)
+        except DatabaseError as e:
+            raise GroupError(500, "Failed to delete group participations: " + e.args[1])
+
     @coroutine
     @validate(gamespace_id="int", group_profile="json_dict", group_flags=GroupFlags,
               group_join_method=GroupJoinMethod, max_members="int", account_id="int",
