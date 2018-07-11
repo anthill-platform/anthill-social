@@ -1,12 +1,8 @@
 
 from tornado.gen import coroutine, Return
-import datetime
 
-from common.social import APIError
 from common.social.apis import SteamAPI
-
-from .. social import SocialAPI, SocialAuthenticationRequired
-from .. token import NoSuchToken
+from .. social import SocialAPI
 
 
 class SteamSocialAPI(SocialAPI, SteamAPI):

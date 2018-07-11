@@ -185,11 +185,13 @@ class SocialAPIModel(object):
         import facebook
         import steam
         import vk
+        import mailru
 
         self.register(google.GoogleSocialAPI(application, tokens, cache))
         self.register(facebook.FacebookSocialAPI(application, tokens, cache))
         self.register(vk.VKSocialAPI(application, tokens, cache))
         self.register(steam.SteamSocialAPI(application, tokens, cache))
+        self.register(mailru.MailRuSocialAPI(application, tokens, cache))
 
     def register(self, api, credential=None):
         if credential is None:
