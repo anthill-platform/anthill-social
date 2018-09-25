@@ -1,13 +1,9 @@
+from . import profile
+from .request import RequestType, RequestError, NoSuchRequest
 
-from tornado.gen import coroutine, Return
-
-import profile
-
-from request import RequestType, RequestError, NoSuchRequest
-
-from common.internal import InternalError
-from common.validate import validate
-from common.database import DatabaseError
+from anthill.common.internal import InternalError
+from anthill.common.validate import validate
+from anthill.common.database import DatabaseError
 
 
 class ConnectionError(Exception):
@@ -20,7 +16,6 @@ class ConnectionError(Exception):
 
 
 class ConnectionsModel(profile.ProfilesModel):
-
     APPROVAL_SCOPE = 'connection_approval'
 
     MESSAGE_CONNECTION_REQUEST = 'connection_request'
@@ -43,13 +38,12 @@ class ConnectionsModel(profile.ProfilesModel):
     def has_delete_account_event(self):
         return True
 
-    @coroutine
-    def accounts_deleted(self, gamespace, accounts, gamespace_only):
+    async def accounts_deleted(self, gamespace, accounts, gamespace_only):
         if gamespace_only:
             return
 
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                     DELETE FROM `account_connections`
                     WHERE `account_id` IN %s OR `account_connection` IN %s;
@@ -57,12 +51,11 @@ class ConnectionsModel(profile.ProfilesModel):
         except DatabaseError as e:
             raise ConnectionError(500, "Failed to delete user connections: " + e.args[1])
 
-    @coroutine
     @validate(account_id="int", target_account="int")
-    def create(self, account_id, target_account):
+    async def create(self, account_id, target_account):
 
         try:
-            yield self.db.insert(
+            await self.db.insert(
                 """
                     INSERT INTO `account_connections`
                     (`account_id`, `account_connection`)
@@ -71,12 +64,11 @@ class ConnectionsModel(profile.ProfilesModel):
         except DatabaseError as e:
             raise ConnectionError(500, "Failed to add a connection: " + e.args[1])
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", approve_account_id="int", key="str", notify="json_dict")
-    def approve_connection(self, gamespace_id, account_id, approve_account_id, key, notify=None):
+    async def approve_connection(self, gamespace_id, account_id, approve_account_id, key, notify=None):
 
         try:
-            request = yield self.requests.acquire(
+            request = await self.requests.acquire(
                 gamespace_id, approve_account_id, key)
         except NoSuchRequest:
             raise ConnectionError(404, "No such request")
@@ -87,23 +79,22 @@ class ConnectionsModel(profile.ProfilesModel):
             raise ConnectionError(400, "Bad request type")
 
         try:
-            yield self.create(
+            await self.create(
                 account_id, request.account)
         except ConnectionError as e:
             raise ConnectionError(500, e.message)
 
         if notify is not None:
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, "user", str(request.account), account_id,
                 ConnectionsModel.MESSAGE_CONNECTION_APPROVED, notify, ["remove_delivered"],
                 authoritative=True)
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", reject_account_id="int", key="str", notify="json_dict")
-    def reject_connection(self, gamespace_id, account_id, reject_account_id, key, notify=None):
+    async def reject_connection(self, gamespace_id, account_id, reject_account_id, key, notify=None):
 
         try:
-            request = yield self.requests.acquire(
+            request = await self.requests.acquire(
                 gamespace_id, reject_account_id, key)
         except NoSuchRequest:
             raise ConnectionError(404, "No such request")
@@ -114,20 +105,19 @@ class ConnectionsModel(profile.ProfilesModel):
             raise ConnectionError(400, "Bad request type")
 
         if notify is not None:
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, "user", str(request.account), account_id,
                 ConnectionsModel.MESSAGE_CONNECTION_REJECTED, notify, ["remove_delivered"],
                 authoritative=True)
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", target_account="int", approval="bool", notify="json_dict",
               payload="json_dict")
-    def request_connection(self, gamespace_id, account_id, target_account, approval=True, notify=None,
-                           payload=None):
+    async def request_connection(self, gamespace_id, account_id, target_account, approval=True, notify=None,
+                                 payload=None):
 
         if approval:
             try:
-                key = yield self.requests.create_request(
+                key = await self.requests.create_request(
                     gamespace_id, account_id, RequestType.ACCOUNT, target_account, payload)
             except RequestError as e:
                 raise ConnectionError(500, e.message)
@@ -137,31 +127,30 @@ class ConnectionsModel(profile.ProfilesModel):
                     "key": key
                 })
 
-                yield self.__send_message__(
+                await self.__send_message__(
                     gamespace_id, "user", str(target_account), account_id,
                     ConnectionsModel.MESSAGE_CONNECTION_REQUEST, notify, ["remove_delivered"],
                     authoritative=True)
 
-            raise Return({
+            return {
                 "key": key
-            })
+            }
         else:
             try:
-                yield self.create(account_id, target_account)
+                await self.create(account_id, target_account)
             except ConnectionError as e:
                 raise ConnectionError(500, e.message)
 
             if notify is not None:
-                yield self.__send_message__(
+                await self.__send_message__(
                     gamespace_id, "user", str(target_account), account_id,
                     ConnectionsModel.MESSAGE_CONNECTION_CREATED, notify, ["remove_delivered"],
                     authoritative=True)
 
-    @coroutine
-    def __send_message__(self, gamespace_id, recipient_class, recipient_key,
-                         account_id, message_type, payload, flags=None, authoritative=False):
+    async def __send_message__(self, gamespace_id, recipient_class, recipient_key,
+                               account_id, message_type, payload, flags=None, authoritative=False):
         try:
-            yield self.internal.rpc(
+            await self.internal.rpc(
                 "message", "send_message",
                 gamespace=gamespace_id, sender=account_id,
                 recipient_class=recipient_class, recipient_key=recipient_key,
@@ -170,10 +159,9 @@ class ConnectionsModel(profile.ProfilesModel):
         except InternalError:
             pass  # well
 
-    @coroutine
-    def cleanup(self, account_id):
+    async def cleanup(self, account_id):
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                     DELETE FROM `account_connections`
                     WHERE `account_id`=%s OR `account_connection`=%s
@@ -182,12 +170,11 @@ class ConnectionsModel(profile.ProfilesModel):
         except DatabaseError as e:
             raise ConnectionError(500, "Failed to delete a connection: " + e.args[1])
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", target_account="int", notify="json_dict")
-    def delete(self, gamespace_id, account_id, target_account, notify=None):
+    async def delete(self, gamespace_id, account_id, target_account, notify=None):
 
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                     DELETE FROM `account_connections`
                     WHERE (`account_id`=%s AND `account_connection`=%s) OR
@@ -198,17 +185,16 @@ class ConnectionsModel(profile.ProfilesModel):
             raise ConnectionError(500, "Failed to delete a connection: " + e.args[1])
 
         if notify is not None:
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, "user", str(target_account), account_id,
                 ConnectionsModel.MESSAGE_CONNECTION_DELETED, notify, ["remove_delivered"],
                 authoritative=True)
 
-    @coroutine
-    def get_connections_profiles(self, gamespace_id, account_id, profile_fields):
-        connections = yield self.list_connections(account_id)
+    async def get_connections_profiles(self, gamespace_id, account_id, profile_fields):
+        connections = await self.list_connections(account_id)
 
         try:
-            connection_profiles = yield self.get_profiles(
+            connection_profiles = await self.get_profiles(
                 account_id,
                 connections,
                 profile_fields,
@@ -217,12 +203,11 @@ class ConnectionsModel(profile.ProfilesModel):
         except profile.ProfileRequestError as e:
             raise ConnectionError(500, e.message)
 
-        raise Return(connection_profiles)
+        return connection_profiles
 
-    @coroutine
-    def list_connections(self, account_id):
+    async def list_connections(self, account_id):
         try:
-            connections = yield self.db.query(
+            connections = await self.db.query(
                 """
                     SELECT * 
                     FROM `account_connections` 
@@ -231,4 +216,4 @@ class ConnectionsModel(profile.ProfilesModel):
         except DatabaseError as e:
             raise ConnectionError(500, "Failed to get connections: " + e.args[1])
 
-        raise Return([str(c["account_connection"]) for c in connections])
+        return [str(c["account_connection"]) for c in connections]

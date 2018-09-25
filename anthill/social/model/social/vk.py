@@ -1,9 +1,8 @@
 
-from tornado.gen import coroutine, Return
 import datetime
 
-from common.social import APIError
-from common.social.apis import VKAPI
+from anthill.common.social import APIError
+from anthill.common.social.apis import VKAPI
 
 from .. social import SocialAPI, SocialAuthenticationRequired
 from .. token import NoSuchToken
@@ -14,15 +13,14 @@ class VKSocialAPI(SocialAPI, VKAPI):
         SocialAPI.__init__(self, application, tokens, "vk", cache)
         VKAPI.__init__(self, cache)
 
-    @coroutine
-    def call(self, gamespace, account_id, method, *args, **kwargs):
+    async def call(self, gamespace, account_id, method, *args, **kwargs):
         """
         Makes google API call.
-        Validates everything, gathers tokens and then yields `method` with all information.
+        Validates everything, gathers tokens and then awaits `method` with all information.
         """
 
         try:
-            token_data = yield self.tokens.get_token(
+            token_data = await self.tokens.get_token(
                 gamespace,
                 account_id,
                 self.credential_type)
@@ -38,44 +36,41 @@ class VKSocialAPI(SocialAPI, VKAPI):
 
         kwargs["access_token"] = access_token
 
-        result = yield method(*args, **kwargs)
+        result = await method(*args, **kwargs)
 
-        raise Return(result)
+        return result
 
-    @coroutine
-    def list_friends(self, gamespace, account_id):
-        friends = yield self.call(
+    async def list_friends(self, gamespace, account_id):
+        friends = await self.call(
             gamespace,
             account_id,
             self.api_get_friends)
 
-        raise Return(friends)
+        return friends
 
     def has_friend_list(self):
         return True
 
-    @coroutine
-    def get_social_profile(self, gamespace, username, account_id, env=None):
-        user_info = yield self.call(
+    async def get_social_profile(self, gamespace, username, account_id, env=None):
+        user_info = await self.call(
             gamespace,
             account_id,
             self.api_get_user_info)
 
-        raise Return(user_info)
+        return user_info
 
-    @coroutine
-    def import_social(self, gamespace, username, auth):
+    async def import_social(self, gamespace, username, auth):
 
         access_token = auth.access_token
         expires_in = auth.expires_in
 
         data = {}
 
-        result = yield self.import_data(
+        result = await self.import_data(
             gamespace,
             username,
             access_token,
             expires_in,
             data)
 
-        raise Return(result)
+        return result

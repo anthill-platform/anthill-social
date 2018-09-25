@@ -1,26 +1,25 @@
-import ujson
 
-from tornado.gen import coroutine, Return
 from tornado.web import HTTPError
 
-from common import to_int
-from common.internal import InternalError
-from common.social import APIError, AuthResponse
-from common.handler import AuthenticatedHandler
-from common.access import scoped, AccessToken, parse_scopes
-from common.validate import validate, validate_value, ValidationError
+from anthill.common import to_int
+from anthill.common.internal import InternalError
+from anthill.common.social import APIError, AuthResponse
+from anthill.common.handler import AuthenticatedHandler
+from anthill.common.access import scoped, AccessToken, parse_scopes
+from anthill.common.validate import validate, validate_value, ValidationError
 
-from model.request import RequestError, RequestType, NoSuchRequest
-from model.connection import ConnectionError, ConnectionsModel
-from model.social import SocialNotFound, NoFriendsFound, SocialAuthenticationRequired
-from model.group import GroupError, GroupsModel, GroupFlags, NoSuchGroup, NoSuchParticipation, GroupJoinMethod
-from model.names import NameIsBusyError, NamesModelError
+from . model.request import RequestError, RequestType, NoSuchRequest
+from . model.connection import ConnectionError, ConnectionsModel
+from . model.social import SocialNotFound, NoFriendsFound, SocialAuthenticationRequired
+from . model.group import GroupError, GroupsModel, GroupFlags, NoSuchGroup, NoSuchParticipation, GroupJoinMethod
+from . model.names import NameIsBusyError, NamesModelError
+
+import ujson
 
 
 class ConnectionsHandler(AuthenticatedHandler):
     @scoped()
-    @coroutine
-    def get(self):
+    async def get(self):
 
         profile_fields = self.get_argument("profile_fields", None)
 
@@ -33,7 +32,7 @@ class ConnectionsHandler(AuthenticatedHandler):
                 raise HTTPError(400, "Corrupted profile_fields")
 
         try:
-            friends = yield self.application.social.list_friends(
+            friends = await self.application.social.list_friends(
                 self.token.get(AccessToken.GAMESPACE),
                 self.token.account,
                 profile_fields=profile_fields)
@@ -57,8 +56,7 @@ class ConnectionsHandler(AuthenticatedHandler):
 
 class IncomingRequestsHandler(AuthenticatedHandler):
     @scoped()
-    @coroutine
-    def get(self):
+    async def get(self):
 
         requests = self.application.requests
 
@@ -73,7 +71,7 @@ class IncomingRequestsHandler(AuthenticatedHandler):
                 raise HTTPError(400, "Corrupted profile_fields")
 
         try:
-            requests = yield requests.list_incoming_account_requests(
+            requests = await requests.list_incoming_account_requests(
                 self.token.get(AccessToken.GAMESPACE),
                 self.token.account, profile_fields=profile_fields)
 
@@ -92,8 +90,7 @@ class IncomingRequestsHandler(AuthenticatedHandler):
 
 class RequestsHandler(AuthenticatedHandler):
     @scoped()
-    @coroutine
-    def get(self):
+    async def get(self):
 
         requests = self.application.requests
 
@@ -108,7 +105,7 @@ class RequestsHandler(AuthenticatedHandler):
                 raise HTTPError(400, "Corrupted profile_fields")
 
         try:
-            requests = yield requests.list_total_account_requests(
+            requests = await requests.list_total_account_requests(
                 self.token.get(AccessToken.GAMESPACE),
                 self.token.account, profile_fields=profile_fields)
 
@@ -127,8 +124,7 @@ class RequestsHandler(AuthenticatedHandler):
 
 class OutgoingRequestsHandler(AuthenticatedHandler):
     @scoped()
-    @coroutine
-    def get(self):
+    async def get(self):
 
         requests = self.application.requests
 
@@ -143,7 +139,7 @@ class OutgoingRequestsHandler(AuthenticatedHandler):
                 raise HTTPError(400, "Corrupted profile_fields")
 
         try:
-            requests = yield requests.list_outgoing_account_requests(
+            requests = await requests.list_outgoing_account_requests(
                 self.token.get(AccessToken.GAMESPACE),
                 self.token.account, profile_fields=profile_fields)
 
@@ -162,8 +158,7 @@ class OutgoingRequestsHandler(AuthenticatedHandler):
 
 class AccountConnectionHandler(AuthenticatedHandler):
     @scoped()
-    @coroutine
-    def delete(self, target_account):
+    async def delete(self, target_account):
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
 
@@ -177,7 +172,7 @@ class AccountConnectionHandler(AuthenticatedHandler):
             notify = None
 
         try:
-            yield self.application.connections.delete(
+            await self.application.connections.delete(
                 gamespace, self.token.account, target_account, notify=notify)
 
         except ConnectionError as e:
@@ -187,8 +182,7 @@ class AccountConnectionHandler(AuthenticatedHandler):
         self.set_header("Access-Control-Allow-Methods", "POST,DELETE,OPTIONS")
 
     @scoped()
-    @coroutine
-    def post(self, target_account):
+    async def post(self, target_account):
 
         approval = self.get_argument("approval", "true") == "true"
         gamespace = self.token.get(AccessToken.GAMESPACE)
@@ -216,7 +210,7 @@ class AccountConnectionHandler(AuthenticatedHandler):
                 ConnectionsModel.APPROVAL_SCOPE))
 
         try:
-            result = yield self.application.connections.request_connection(
+            result = await self.application.connections.request_connection(
                 gamespace, self.token.account, target_account, approval=approval, notify=notify,
                 payload=payload)
         except ConnectionError as e:
@@ -228,8 +222,7 @@ class AccountConnectionHandler(AuthenticatedHandler):
 
 class ApproveConnectionHandler(AuthenticatedHandler):
     @scoped()
-    @coroutine
-    def post(self, approve_account_id):
+    async def post(self, approve_account_id):
         key = self.get_argument("key")
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account_id = self.token.account
@@ -244,7 +237,7 @@ class ApproveConnectionHandler(AuthenticatedHandler):
             notify = None
 
         try:
-            yield self.application.connections.approve_connection(
+            await self.application.connections.approve_connection(
                 gamespace, account_id, approve_account_id, key, notify=notify)
         except ConnectionError as e:
             raise HTTPError(e.code, e.message)
@@ -252,8 +245,7 @@ class ApproveConnectionHandler(AuthenticatedHandler):
 
 class RejectConnectionHandler(AuthenticatedHandler):
     @scoped()
-    @coroutine
-    def post(self, reject_account_id):
+    async def post(self, reject_account_id):
 
         key = self.get_argument("key")
         gamespace = self.token.get(AccessToken.GAMESPACE)
@@ -269,7 +261,7 @@ class RejectConnectionHandler(AuthenticatedHandler):
             notify = None
 
         try:
-            yield self.application.connections.reject_connection(
+            await self.application.connections.reject_connection(
                 gamespace, account_id, reject_account_id, key, notify=notify)
         except ConnectionError as e:
             raise HTTPError(500, e.message)
@@ -279,43 +271,39 @@ class InternalHandler(object):
     def __init__(self, application):
         self.application = application
 
-    @coroutine
-    def acquire_name(self, gamespace, account, kind, name):
+    async def acquire_name(self, gamespace, account, kind, name):
         names = self.application.names
 
         try:
-            yield names.acquire_name(gamespace, account, kind, name)
+            await names.acquire_name(gamespace, account, kind, name)
         except NameIsBusyError:
             raise InternalError(409, "Name is busy")
         except NamesModelError as e:
             raise InternalError(e.code, e.message)
 
-        raise Return("OK")
+        return "OK"
 
-    @coroutine
-    def check_name(self, gamespace, kind, name):
+    async def check_name(self, gamespace, kind, name):
         names = self.application.names
 
         try:
-            account_id = yield names.check_name(gamespace, kind, name)
+            account_id = await names.check_name(gamespace, kind, name)
         except NamesModelError as e:
             raise InternalError(e.code, e.message)
 
-        raise Return(account_id)
+        return account_id
 
-    @coroutine
-    def release_name(self, gamespace, account, kind):
+    async def release_name(self, gamespace, account, kind):
         names = self.application.names
 
         try:
-            released = yield names.release_name(gamespace, account, kind)
+            released = await names.release_name(gamespace, account, kind)
         except NamesModelError as e:
             raise InternalError(e.code, e.message)
-        raise Return(released)
+        return released
 
-    @coroutine
-    def attach_account(self, gamespace, credential, username, account, env=None, fetch_profile=True):
-        yield self.application.tokens.attach(
+    async def attach_account(self, gamespace, credential, username, account, env=None, fetch_profile=True):
+        await self.application.tokens.attach(
             gamespace,
             credential,
             username,
@@ -328,16 +316,15 @@ class InternalHandler(object):
                 raise InternalError(404, "No such credential: '{0}'.".format(credential))
 
             try:
-                result = yield api.get_social_profile(gamespace, username, account, env=env)
+                result = await api.get_social_profile(gamespace, username, account, env=env)
             except APIError as e:
-                raise InternalError(e.code, e.message)
+                raise InternalError(e.code, str(e))
             else:
-                raise Return(result)
+                return result
         else:
-            raise Return("OK")
+            return "OK"
 
-    @coroutine
-    def import_social(self, gamespace, username, credential, auth):
+    async def import_social(self, gamespace, username, credential, auth):
 
         if not isinstance(auth, dict):
             raise InternalError(400, "Auth should be a dict")
@@ -351,37 +338,28 @@ class InternalHandler(object):
             raise InternalError(404, "No such credential: '{0}'.".format(credential))
 
         try:
-            result = yield api.import_social(
-                gamespace,
-                username,
-                auth)
-
+            result = await api.import_social(gamespace, username, auth)
         except APIError as e:
-            raise HTTPError(e.code, e.message)
+            raise HTTPError(e.code, str(e))
         else:
-            raise Return(result)
+            return result
 
-    @coroutine
-    def get_connections(self, gamespace, account_id, profile_fields):
+    async def get_connections(self, gamespace, account_id, profile_fields):
 
         connections_data = self.application.connections
 
         try:
-            connections = yield connections_data.get_connections_profiles(
-                gamespace,
-                account_id,
-                profile_fields)
-
+            connections = await connections_data.get_connections_profiles(
+                gamespace, account_id, profile_fields)
         except ConnectionError as e:
             raise HTTPError(e.code, e.message)
 
-        raise Return(connections)
+        return connections
 
-    @coroutine
-    def get_group(self, gamespace, group_id):
+    async def get_group(self, gamespace, group_id):
 
         try:
-            group, participants = yield self.application.groups.get_group_with_participants(
+            group, participants = await self.application.groups.get_group_with_participants(
                 gamespace, group_id)
         except NoSuchGroup:
             raise InternalError(404, "No such group")
@@ -417,41 +395,38 @@ class InternalHandler(object):
                 "recipient": str(group_id),
             }
 
-        raise Return(result)
+        return result
 
-    @coroutine
     @validate(gamespace="int", group_id="int", profile="json_dict", path="json_list_of_strings", merge="bool")
-    def update_group_profile(self, gamespace, group_id, profile, path=None, merge=True):
+    async def update_group_profile(self, gamespace, group_id, profile, path=None, merge=True):
 
         try:
-            result = yield self.application.groups.update_group_no_check(
+            result = await self.application.groups.update_group_no_check(
                 gamespace, group_id, profile, path=path, merge=merge)
         except GroupError as e:
             raise InternalError(e.code, e.message)
 
-        raise Return(result)
+        return result
 
-    @coroutine
     @validate(gamespace="int", group_profiles="json_dict", path="json_list_of_strings", merge="bool", synced="bool")
-    def update_group_profiles(self, gamespace, group_profiles, path=None, merge=True, synced=False):
+    async def update_group_profiles(self, gamespace, group_profiles, path=None, merge=True, synced=False):
 
         try:
             if synced:
-                result = yield self.application.groups.update_groups(
+                result = await self.application.groups.update_groups(
                     gamespace, group_profiles, merge=merge)
             else:
-                result = yield self.application.groups.update_groups_no_check(
+                result = await self.application.groups.update_groups_no_check(
                     gamespace, group_profiles, path=path, merge=merge)
         except GroupError as e:
             raise InternalError(e.code, e.message)
 
-        raise Return(result)
+        return result
 
 
 class CreateGroupHandler(AuthenticatedHandler):
     @scoped(scopes=["group_create"])
-    @coroutine
-    def post(self):
+    async def post(self):
 
         join_method_str = self.get_argument("join_method", GroupJoinMethod.FREE)
         max_members = self.get_argument("max_members", GroupsModel.DEFAULT_MAX_MEMBERS)
@@ -483,7 +458,7 @@ class CreateGroupHandler(AuthenticatedHandler):
         account = self.token.account
 
         try:
-            group_id = yield self.application.groups.create_group(
+            group_id = await self.application.groups.create_group(
                 gamespace, group_profile, flags, join_method, max_members,
                 account, participation_profile, group_name=group_name)
         except GroupError as e:
@@ -496,8 +471,7 @@ class CreateGroupHandler(AuthenticatedHandler):
 
 class SearchGroupsHandler(AuthenticatedHandler):
     @scoped()
-    @coroutine
-    def get(self):
+    async def get(self):
 
         query = self.get_argument("query")
 
@@ -505,7 +479,7 @@ class SearchGroupsHandler(AuthenticatedHandler):
         account = self.token.account
 
         try:
-            groups = yield self.application.groups.search_groups(gamespace, query)
+            groups = await self.application.groups.search_groups(gamespace, query)
         except GroupError as e:
             raise HTTPError(e.code, e.message)
 
@@ -527,8 +501,7 @@ class SearchGroupsHandler(AuthenticatedHandler):
 
 class UniqueNamesAcquireHandler(AuthenticatedHandler):
     @scoped(scopes=["names_write"])
-    @coroutine
-    def post(self, kind):
+    async def post(self, kind):
         name = self.get_argument("name")
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
@@ -536,7 +509,7 @@ class UniqueNamesAcquireHandler(AuthenticatedHandler):
         names = self.application.names
 
         try:
-            yield names.acquire_name(gamespace, account_id, kind, name)
+            await names.acquire_name(gamespace, account_id, kind, name)
         except NameIsBusyError:
             raise HTTPError(409, "Name is busy")
         except NamesModelError as e:
@@ -545,8 +518,7 @@ class UniqueNamesAcquireHandler(AuthenticatedHandler):
 
 class UniqueNamesSearchHandler(AuthenticatedHandler):
     @scoped(scopes=["names"])
-    @coroutine
-    def get(self, kind):
+    async def get(self, kind):
         query = self.get_argument("query")
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
@@ -563,7 +535,7 @@ class UniqueNamesSearchHandler(AuthenticatedHandler):
                 raise HTTPError(400, "Corrupted profile_fields")
 
         try:
-            names = yield names.search_names(
+            names = await names.search_names(
                 gamespace, kind, query,
                 profile_fields=profile_fields)
         except NamesModelError as e:
@@ -583,29 +555,27 @@ class UniqueNamesSearchHandler(AuthenticatedHandler):
 
 class UniqueNamesDeleteHandler(AuthenticatedHandler):
     @scoped(scopes=["names_write"])
-    @coroutine
-    def delete(self, kind):
+    async def delete(self, kind):
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account_id = self.token.account
         names = self.application.names
 
         try:
-            yield names.release_name(gamespace, account_id, kind)
+            await names.release_name(gamespace, account_id, kind)
         except NamesModelError as e:
             raise HTTPError(e.code, e.message)
 
 
 class GroupHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def get(self, group_id):
+    async def get(self, group_id):
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account_id = self.token.account
 
         try:
-            group, participants, my_participation = yield self.application.groups.get_group_with_participants(
+            group, participants, my_participation = await self.application.groups.get_group_with_participants(
                 gamespace, group_id, account_id)
         except NoSuchGroup as e:
             raise HTTPError(404, "No such group")
@@ -651,8 +621,7 @@ class GroupHandler(AuthenticatedHandler):
         self.dumps(result)
 
     @scoped(scopes=["group", "group_write"])
-    @coroutine
-    def post(self, group_id):
+    async def post(self, group_id):
 
         new_name = self.get_argument("name", None)
         new_join_method_str = self.get_argument("join_method", None)
@@ -679,7 +648,7 @@ class GroupHandler(AuthenticatedHandler):
         account = self.token.account
 
         try:
-            yield self.application.groups.update_group_summary(
+            await self.application.groups.update_group_summary(
                 gamespace, group_id, account, name=new_name, join_method=new_join_method,
                 notify=notify, authoritative=authoritative)
         except GroupError as e:
@@ -688,8 +657,7 @@ class GroupHandler(AuthenticatedHandler):
 
 class GroupBatchProfilesHandler(AuthenticatedHandler):
     @scoped(scopes=["group_batch"])
-    @coroutine
-    def get(self):
+    async def get(self):
 
         try:
             group_ids = ujson.loads(self.get_argument("group_ids"))
@@ -699,7 +667,7 @@ class GroupBatchProfilesHandler(AuthenticatedHandler):
         gamespace = self.token.get(AccessToken.GAMESPACE)
 
         try:
-            groups = yield self.application.groups.list_groups(gamespace, group_ids)
+            groups = await self.application.groups.list_groups(gamespace, group_ids)
         except NoSuchGroup as e:
             raise HTTPError(404, "No such group")
         except GroupError as e:
@@ -728,8 +696,7 @@ class GroupBatchProfilesHandler(AuthenticatedHandler):
         self.dumps(result)
 
     @scoped(scopes=["group_write", "group_batch"])
-    @coroutine
-    def post(self):
+    async def post(self):
 
         try:
             group_profiles = ujson.loads(self.get_argument("profiles"))
@@ -740,7 +707,7 @@ class GroupBatchProfilesHandler(AuthenticatedHandler):
         gamespace = self.token.get(AccessToken.GAMESPACE)
 
         try:
-            result = yield self.application.groups.update_groups(
+            result = await self.application.groups.update_groups(
                 gamespace, group_profiles, merge=merge)
         except NoSuchParticipation:
             raise HTTPError(406, "This account does not participate this group.")
@@ -752,28 +719,27 @@ class GroupBatchProfilesHandler(AuthenticatedHandler):
                 group_id: {
                     "profile": group_profile
                 }
-                for group_id, group_profile in result.iteritems()
+                for group_id, group_profile in result.items()
             }
         })
 
 
 class GroupProfileHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def get(self, group_id):
+    async def get(self, group_id):
 
         account_id = self.token.account
         gamespace = self.token.get(AccessToken.GAMESPACE)
 
         try:
-            group = yield self.application.groups.get_group(gamespace, group_id)
+            group = await self.application.groups.get_group(gamespace, group_id)
         except NoSuchGroup as e:
             raise HTTPError(404, "No such group")
         except GroupError as e:
             raise HTTPError(e.code, e.message)
 
         try:
-            participant = yield self.application.groups.has_group_participation(gamespace, group_id, account_id)
+            participant = await self.application.groups.has_group_participation(gamespace, group_id, account_id)
         except GroupError as e:
             raise HTTPError(e.code, e.message)
 
@@ -796,8 +762,7 @@ class GroupProfileHandler(AuthenticatedHandler):
         self.dumps(result)
 
     @scoped(scopes=["group", "group_write"])
-    @coroutine
-    def post(self, group_id):
+    async def post(self, group_id):
 
         try:
             group_profile = ujson.loads(self.get_argument("profile"))
@@ -819,7 +784,7 @@ class GroupProfileHandler(AuthenticatedHandler):
         account = self.token.account
 
         try:
-            result = yield self.application.groups.update_group(
+            result = await self.application.groups.update_group(
                 gamespace, group_id, account, group_profile, merge=merge,
                 notify=notify, authoritative=authoritative)
         except NoSuchParticipation:
@@ -836,8 +801,7 @@ class GroupProfileHandler(AuthenticatedHandler):
 
 class GroupJoinHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def post(self, group_id):
+    async def post(self, group_id):
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account = self.token.account
@@ -859,7 +823,7 @@ class GroupJoinHandler(AuthenticatedHandler):
         authoritative = self.token.has_scope("message_authoritative")
 
         try:
-            yield self.application.groups.join_group(
+            await self.application.groups.join_group(
                 gamespace, group_id, account,
                 participation_profile, notify=notify,
                 authoritative=authoritative)
@@ -871,8 +835,7 @@ class GroupJoinHandler(AuthenticatedHandler):
 
 class GroupAcceptInvitationHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def post(self, group_id):
+    async def post(self, group_id):
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account = self.token.account
@@ -895,7 +858,7 @@ class GroupAcceptInvitationHandler(AuthenticatedHandler):
         authoritative = self.token.has_scope("message_authoritative")
 
         try:
-            yield self.application.groups.accept_group_invitation(
+            await self.application.groups.accept_group_invitation(
                 gamespace, group_id, account,
                 participation_profile, key=key,
                 notify=notify, authoritative=authoritative)
@@ -907,8 +870,7 @@ class GroupAcceptInvitationHandler(AuthenticatedHandler):
 
 class GroupRejectInvitationHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def post(self, group_id):
+    async def post(self, group_id):
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account = self.token.account
@@ -926,7 +888,7 @@ class GroupRejectInvitationHandler(AuthenticatedHandler):
         authoritative = self.token.has_scope("message_authoritative")
 
         try:
-            yield self.application.groups.reject_group_invitation(
+            await self.application.groups.reject_group_invitation(
                 gamespace, group_id, account, key=key,
                 notify=notify, authoritative=authoritative)
         except NoSuchGroup:
@@ -937,8 +899,7 @@ class GroupRejectInvitationHandler(AuthenticatedHandler):
 
 class GroupLeaveHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def post(self, group_id):
+    async def post(self, group_id):
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account = self.token.account
@@ -955,7 +916,7 @@ class GroupLeaveHandler(AuthenticatedHandler):
         authoritative = self.token.has_scope("message_authoritative")
 
         try:
-            yield self.application.groups.leave_group(
+            await self.application.groups.leave_group(
                 gamespace, group_id, account, notify=notify, authoritative=authoritative)
         except NoSuchGroup:
             raise HTTPError(404, "No such group")
@@ -965,8 +926,7 @@ class GroupLeaveHandler(AuthenticatedHandler):
 
 class GroupOwnershipHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def post(self, group_id):
+    async def post(self, group_id):
 
         account_transfer_to = self.get_argument("account_transfer_to")
         account_my_role = self.get_argument("my_role", 0)
@@ -986,7 +946,7 @@ class GroupOwnershipHandler(AuthenticatedHandler):
         authoritative = self.token.has_scope("message_authoritative")
 
         try:
-            yield self.application.groups.transfer_ownership(
+            await self.application.groups.transfer_ownership(
                 gamespace, group_id, account, account_transfer_to,
                 account_my_role,
                 notify=notify, authoritative=authoritative)
@@ -998,8 +958,7 @@ class GroupOwnershipHandler(AuthenticatedHandler):
 
 class GroupRequestJoinHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def post(self, group_id):
+    async def post(self, group_id):
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
         account = self.token.account
@@ -1021,7 +980,7 @@ class GroupRequestJoinHandler(AuthenticatedHandler):
         authoritative = self.token.has_scope("message_authoritative")
 
         try:
-            key = yield self.application.groups.join_group_request(
+            key = await self.application.groups.join_group_request(
                 gamespace, group_id, account, participation_profile,
                 notify=notify, authoritative=authoritative)
         except NoSuchGroup:
@@ -1036,8 +995,7 @@ class GroupRequestJoinHandler(AuthenticatedHandler):
 
 class GroupInviteAccountJoinHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def post(self, group_id, invite_account):
+    async def post(self, group_id, invite_account):
 
         gamespace_id = self.token.get(AccessToken.GAMESPACE)
         account_id = self.token.account
@@ -1060,7 +1018,7 @@ class GroupInviteAccountJoinHandler(AuthenticatedHandler):
         authoritative = self.token.has_scope("message_authoritative")
 
         try:
-            key = yield self.application.groups.invite_to_group(
+            key = await self.application.groups.invite_to_group(
                 gamespace_id, group_id, account_id, invite_account,
                 role, permissions, notify=notify, authoritative=authoritative)
         except NoSuchGroup:
@@ -1077,8 +1035,7 @@ class GroupInviteAccountJoinHandler(AuthenticatedHandler):
 
 class GroupApproveAccountJoinHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def post(self, group_id, approve_account):
+    async def post(self, group_id, approve_account):
 
         gamespace_id = self.token.get(AccessToken.GAMESPACE)
         account_id = self.token.account
@@ -1103,7 +1060,7 @@ class GroupApproveAccountJoinHandler(AuthenticatedHandler):
         authoritative = self.token.has_scope("message_authoritative")
 
         try:
-            yield self.application.groups.approve_join_group(
+            await self.application.groups.approve_join_group(
                 gamespace_id, group_id, account_id, approve_account,
                 role, key, permissions, notify=notify, authoritative=authoritative)
         except NoSuchGroup:
@@ -1118,8 +1075,7 @@ class GroupApproveAccountJoinHandler(AuthenticatedHandler):
 
 class GroupRejectAccountJoinHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def post(self, group_id, reject_account):
+    async def post(self, group_id, reject_account):
 
         gamespace_id = self.token.get(AccessToken.GAMESPACE)
         account_id = self.token.account
@@ -1138,7 +1094,7 @@ class GroupRejectAccountJoinHandler(AuthenticatedHandler):
         authoritative = self.token.has_scope("message_authoritative")
 
         try:
-            yield self.application.groups.reject_join_group(
+            await self.application.groups.reject_join_group(
                 gamespace_id, group_id, account_id, reject_account,
                 key, notify=notify, authoritative=authoritative)
         except NoSuchGroup:
@@ -1153,8 +1109,7 @@ class GroupRejectAccountJoinHandler(AuthenticatedHandler):
 
 class GroupParticipationHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def get(self, group_id, account_id):
+    async def get(self, group_id, account_id):
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
 
@@ -1162,13 +1117,13 @@ class GroupParticipationHandler(AuthenticatedHandler):
             account_id = self.token.account
 
         try:
-            owner = yield self.application.groups.is_group_owner(
+            owner = await self.application.groups.is_group_owner(
                 gamespace, group_id, account_id)
         except GroupError as e:
             raise HTTPError(e.code, e.message)
 
         try:
-            participation = yield self.application.groups.get_group_participation(
+            participation = await self.application.groups.get_group_participation(
                 gamespace, group_id, account_id)
         except NoSuchParticipation as e:
             raise HTTPError(404, "Player is not participating this group")
@@ -1185,8 +1140,7 @@ class GroupParticipationHandler(AuthenticatedHandler):
         })
 
     @scoped(scopes=["group"])
-    @coroutine
-    def post(self, group_id, account_id):
+    async def post(self, group_id, account_id):
 
         if account_id == "me":
             account_id = self.token.account
@@ -1214,7 +1168,7 @@ class GroupParticipationHandler(AuthenticatedHandler):
         merge = self.get_argument("merge", "true") == "true"
 
         try:
-            result = yield self.application.groups.update_group_participation(
+            result = await self.application.groups.update_group_participation(
                 gamespace, group_id, my_account, account_id, participation_profile, merge=merge,
                 notify=notify, authoritative=authoritative)
         except NoSuchParticipation:
@@ -1227,8 +1181,7 @@ class GroupParticipationHandler(AuthenticatedHandler):
             })
 
     @scoped(scopes=["group"])
-    @coroutine
-    def delete(self, group_id, account_id):
+    async def delete(self, group_id, account_id):
 
         gamespace = self.token.get(AccessToken.GAMESPACE)
         my_account = self.token.account
@@ -1245,7 +1198,7 @@ class GroupParticipationHandler(AuthenticatedHandler):
         authoritative = self.token.has_scope("message_authoritative")
 
         try:
-            yield self.application.groups.kick_from_group(
+            await self.application.groups.kick_from_group(
                 gamespace, group_id, my_account, account_id,
                 notify=notify, authoritative=authoritative)
         except NoSuchParticipation:
@@ -1256,8 +1209,7 @@ class GroupParticipationHandler(AuthenticatedHandler):
 
 class GroupParticipationPermissionsHandler(AuthenticatedHandler):
     @scoped(scopes=["group"])
-    @coroutine
-    def post(self, group_id, account_id):
+    async def post(self, group_id, account_id):
 
         if account_id == "me":
             account_id = self.token.account
@@ -1286,7 +1238,7 @@ class GroupParticipationPermissionsHandler(AuthenticatedHandler):
         my_account = self.token.account
 
         try:
-            yield self.application.groups.update_group_participation_permissions(
+            await self.application.groups.update_group_participation_permissions(
                 gamespace, group_id, my_account, account_id, target_role, permissions,
                 notify=notify, authoritative=authoritative)
         except NoSuchGroup:

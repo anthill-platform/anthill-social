@@ -1,11 +1,9 @@
 
-from tornado.gen import coroutine, Return
-
-from common.validate import validate
-from common.model import Model
-from common.database import DatabaseError, DuplicateError
-from common.internal import Internal, InternalError
-from common import cached
+from anthill.common.validate import validate
+from anthill.common.model import Model
+from anthill.common.database import DatabaseError, DuplicateError
+from anthill.common.internal import Internal, InternalError
+from anthill.common import cached
 
 import re
 import hashlib
@@ -46,17 +44,16 @@ class NamesModel(Model):
     def has_delete_account_event(self):
         return True
 
-    @coroutine
-    def accounts_deleted(self, gamespace, accounts, gamespace_only):
+    async def accounts_deleted(self, gamespace, accounts, gamespace_only):
         try:
             if gamespace_only:
-                yield self.db.execute(
+                await self.db.execute(
                     """
                         DELETE FROM `unique_names`
                         WHERE `gamespace_id`=%s AND `account_id` IN %s;
                     """, gamespace, accounts)
             else:
-                yield self.db.execute(
+                await self.db.execute(
                     """
                         DELETE FROM `unique_names`
                         WHERE `account_id` IN %s;
@@ -64,14 +61,13 @@ class NamesModel(Model):
         except DatabaseError as e:
             raise NamesModelError(500, "Failed to delete unique names: " + e.args[1])
 
-    @coroutine
     @validate(gamespace_id="int", kind="str_name", query="str", profile_fields="json_list_of_strings")
-    def search_names(self, gamespace_id, kind, query, profile_fields=None, db=None):
+    async def search_names(self, gamespace_id, kind, query, profile_fields=None, db=None):
 
         words = re.findall(r'[^\s]+', query)
 
         if not words:
-            raise Return([])
+            return []
 
         if len(words) > 32:
             # too many words
@@ -80,7 +76,7 @@ class NamesModel(Model):
         compiled = u" ".join(u"+" + word + u"*" for word in words if len(word) > 2)
 
         try:
-            names = yield (db or self.db).query(
+            names = await (db or self.db).query(
                 u"""
                     SELECT `account_id`, `name`
                     FROM `unique_names`
@@ -116,20 +112,19 @@ class NamesModel(Model):
                     profile_fields=profile_fields)
 
             try:
-                profiles = yield do_request()
+                profiles = await do_request()
             except InternalError as e:
-                raise NamesModelError(e.code, e.message)
+                raise NamesModelError(e.code, str(e))
 
             for name in names:
                 name.profile = profiles.get(str(name.account_id))
 
-        raise Return(names)
+        return names
 
-    @coroutine
     @validate(gamespace_id="int", kind="str_name", name="str")
-    def check_name(self, gamespace_id, kind, name):
+    async def check_name(self, gamespace_id, kind, name):
         try:
-            busy = yield self.db.get(
+            busy = await self.db.get(
                 """
                 SELECT `account_id` FROM `unique_names`
                 WHERE `gamespace_id`=%s AND `kind`=%s AND `name`=%s
@@ -139,15 +134,14 @@ class NamesModel(Model):
             raise NamesModelError(500, e.args[1])
 
         if not busy:
-            raise Return(None)
+            return None
 
-        raise Return(busy["account_id"])
+        return busy["account_id"]
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", kind="str_name", name="str")
-    def acquire_name(self, gamespace_id, account_id, kind, name):
+    async def acquire_name(self, gamespace_id, account_id, kind, name):
         try:
-            updated = yield self.db.execute(
+            updated = await self.db.execute(
                 """
                 INSERT INTO `unique_names`
                 (`gamespace_id`, `account_id`, `kind`, `name`)
@@ -161,11 +155,10 @@ class NamesModel(Model):
         if not updated:
             raise NameIsBusyError()
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", kind="str_name")
-    def release_name(self, gamespace_id, account_id, kind):
+    async def release_name(self, gamespace_id, account_id, kind):
         try:
-            released = yield self.db.execute(
+            released = await self.db.execute(
                 """
                 DELETE FROM `unique_names`
                 WHERE `gamespace_id`=%s AND `account_id`=%s AND `kind`=%s
@@ -174,4 +167,4 @@ class NamesModel(Model):
         except DatabaseError as e:
             raise NamesModelError(500, e.args[1])
         else:
-            raise Return(bool(released))
+            return bool(released)

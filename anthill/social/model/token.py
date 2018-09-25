@@ -1,9 +1,8 @@
 
-import ujson
+from anthill.common.database import DatabaseError
+from anthill.common.model import Model
 
-from tornado.gen import coroutine, Return
-from common.database import DatabaseError
-from common.model import Model
+import ujson
 
 
 class SocialTokensError(Exception):
@@ -12,6 +11,10 @@ class SocialTokensError(Exception):
 
     def __str__(self):
         return self.message
+
+
+class NoSuchToken(Exception):
+    pass
 
 
 class SocialTokenAdapter(object):
@@ -41,17 +44,16 @@ class SocialTokensModel(Model):
     def has_delete_account_event(self):
         return True
 
-    @coroutine
-    def accounts_deleted(self, gamespace, accounts, gamespace_only):
+    async def accounts_deleted(self, gamespace, accounts, gamespace_only):
         try:
             if gamespace_only:
-                yield self.db.execute(
+                await self.db.execute(
                     """
                         DELETE FROM `credential_tokens`
                         WHERE `gamespace_id`=%s AND `account_id` IN %s;
                     """, gamespace, accounts)
             else:
-                yield self.db.execute(
+                await self.db.execute(
                     """
                         DELETE FROM `credential_tokens`
                         WHERE `account_id` IN %s;
@@ -59,11 +61,10 @@ class SocialTokensModel(Model):
         except DatabaseError as e:
             raise SocialTokensError("Failed to delete saved tokens: " + e.args[1])
 
-    @coroutine
-    def attach(self, gamespace_id, credential, username, account):
+    async def attach(self, gamespace_id, credential, username, account):
         try:
             merged = str(credential) + ":" + str(username)
-            yield self.db.execute(
+            await self.db.execute(
                 """
                     UPDATE `credential_tokens`
                     SET `account_id`=%s
@@ -73,10 +74,9 @@ class SocialTokensModel(Model):
         except DatabaseError as e:
             raise SocialTokensError("Failed to attach account: " + e.args[1])
 
-    @coroutine
-    def get_token(self, gamespace_id, account_id, credential):
+    async def get_token(self, gamespace_id, account_id, credential):
         try:
-            token = yield self.db.get(
+            token = await self.db.get(
                 """
                     SELECT *
                     FROM `credential_tokens`
@@ -89,14 +89,13 @@ class SocialTokensModel(Model):
         if not token:
             raise NoSuchToken()
 
-        raise Return(SocialTokenAdapter(token))
+        return SocialTokenAdapter(token)
 
-    @coroutine
-    def get_credential(self, gamespace_id, credential, username):
+    async def get_credential(self, gamespace_id, credential, username):
 
         try:
             merged = str(credential) + ":" + str(username)
-            token = yield self.db.get(
+            token = await self.db.get(
                 """
                     SELECT *
                     FROM `credential_tokens`
@@ -109,16 +108,15 @@ class SocialTokensModel(Model):
         if not token:
             raise NoSuchToken()
 
-        raise Return(SocialTokenAdapter(token))
+        return SocialTokenAdapter(token)
 
-    @coroutine
-    def lookup_accounts(self, gamespace_id, credentials):
+    async def lookup_accounts(self, gamespace_id, credentials):
 
         if not len(credentials):
-            raise Return({})
+            return {}
 
         try:
-            tokens = yield self.db.query(
+            tokens = await self.db.query(
                 """
                     SELECT *
                     FROM `credential_tokens`
@@ -128,16 +126,15 @@ class SocialTokensModel(Model):
         except DatabaseError as e:
             raise SocialTokensError("Failed to get token credential: " + e.args[1])
 
-        raise Return({
+        return {
             str(token["merged_credential"]): str(token["account_id"])
             for token in tokens
-        })
+        }
 
-    @coroutine
-    def list_tokens(self, gamespace_id, account_id):
+    async def list_tokens(self, gamespace_id, account_id):
 
         try:
-            tokens = yield self.db.query(
+            tokens = await self.db.query(
                 """
                     SELECT *
                     FROM `credential_tokens`
@@ -147,21 +144,20 @@ class SocialTokensModel(Model):
         except DatabaseError as e:
             raise SocialTokensError("Failed get tokens: " + e.args[1])
 
-        raise Return(map(SocialTokenAdapter, tokens))
+        return map(SocialTokenAdapter, tokens)
 
-    @coroutine
-    def update_token(self, gamespace_id, credential, username, access_token, expires_at, data):
+    async def update_token(self, gamespace_id, credential, username, access_token, expires_at, data):
 
         merged = str(credential) + ":" + str(username)
 
         try:
-            old_token = yield self.get_credential(gamespace_id, credential, username)
+            old_token = await self.get_credential(gamespace_id, credential, username)
             account = old_token.account
         except NoSuchToken:
             data_text = ujson.dumps(data or {})
 
             try:
-                yield self.db.insert(
+                await self.db.insert(
                     """
                         INSERT INTO `credential_tokens`
                         (`credential`, `username`, `access_token`, `expires_at`, `payload`, `gamespace_id`,
@@ -172,14 +168,14 @@ class SocialTokensModel(Model):
             except DatabaseError as e:
                 raise SocialTokensError("Failed to save token: " + e.args[1])
 
-            raise Return(None)
+            return None
         else:
             old_data = old_token.payload or {}
             old_data.update(data or {})
             data_text = ujson.dumps(old_data)
 
             try:
-                yield self.db.execute(
+                await self.db.execute(
                     """
                         UPDATE `credential_tokens`
                         SET `access_token`=%s, `expires_at`=%s, `payload`=%s
@@ -189,8 +185,4 @@ class SocialTokensModel(Model):
             except DatabaseError as e:
                 raise SocialTokensError("Failed to save token: " + e.args[1])
 
-            raise Return(account)
-
-
-class NoSuchToken(Exception):
-    pass
+            return account

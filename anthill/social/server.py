@@ -1,37 +1,30 @@
 
-from common.options import options
+from anthill.common.options import options
+from anthill.common import server, database, access, sign, keyvalue
 
-import handler as h
-
-import common.server
-import common.database
-import common.access
-import common.sign
-import common.keyvalue
-
-from model.connection import ConnectionsModel
-from model.request import RequestsModel
-from model.social import SocialAPIModel
-from model.token import SocialTokensModel
-from model.group import GroupsModel
-from model.names import NamesModel
-
-import options as _opts
-import admin
+from . model.connection import ConnectionsModel
+from . model.request import RequestsModel
+from . model.social import SocialAPIModel
+from . model.token import SocialTokensModel
+from . model.group import GroupsModel
+from . model.names import NamesModel
+from . import handler as h
+from . import options as _opts
+from . import admin
 
 
-class SocialServer(common.server.Server):
+class SocialServer(server.Server):
     # noinspection PyShadowingNames
     def __init__(self, db=None):
         super(SocialServer, self).__init__()
 
-        self.db = db or common.database.Database(
+        self.db = db or database.Database(
             host=options.db_host,
             database=options.db_name,
             user=options.db_username,
             password=options.db_password)
 
-        self.cache = common.keyvalue.KeyValueStorage(
+        self.cache = keyvalue.KeyValueStorage(
             host=options.cache_host,
             port=options.cache_port,
             db=options.cache_db,
@@ -97,6 +90,6 @@ class SocialServer(common.server.Server):
 
 
 if __name__ == "__main__":
-    stt = common.server.init()
-    common.access.AccessToken.init([common.access.public()])
-    common.server.start(SocialServer)
+    stt = server.init()
+    access.AccessToken.init([access.public()])
+    server.start(SocialServer)

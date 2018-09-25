@@ -1,9 +1,7 @@
 
-from tornado.gen import coroutine, Return
-
-from common import cached
-from common.internal import Internal, InternalError
-from common.model import Model
+from anthill.common import cached
+from anthill.common.internal import Internal, InternalError
+from anthill.common.model import Model
 
 
 class ProfileRequestError(Exception):
@@ -21,8 +19,7 @@ class ProfilesModel(Model):
         self.cache = cache
         self.internal = Internal()
 
-    @coroutine
-    def get_profiles(self, account_id, profile_ids, profile_fields, gamespace):
+    async def get_profiles(self, account_id, profile_ids, profile_fields, gamespace):
 
         if not profile_fields:
 
@@ -33,16 +30,15 @@ class ProfilesModel(Model):
                 for account_id in profile_ids
             ]
 
-            raise Return(result)
+            return result
 
         @cached(kv=self.cache,
                 h=lambda: ProfilesModel.__cache_hash__(account_id, ",".join(profile_ids + profile_fields)),
                 ttl=300,
                 json=True)
-        @coroutine
-        def get_profiles():
+        async def get_profiles():
             try:
-                profiles = yield self.internal.request(
+                profiles = await self.internal.request(
                     "profile",
                     "mass_profiles",
                     accounts=profile_ids,
@@ -54,16 +50,16 @@ class ProfilesModel(Model):
                 raise ProfileRequestError(
                     "Failed to request profiles: " + e.body)
 
-            raise Return(profiles)
+            return profiles
 
-        account_profiles = yield get_profiles()
+        account_profiles = await get_profiles()
 
         result = [
             {
                 "account": account_id,
                 "profile": profile
             }
-            for account_id, profile in account_profiles.iteritems()
+            for account_id, profile in account_profiles.items()
         ]
 
-        raise Return(result)
+        return result

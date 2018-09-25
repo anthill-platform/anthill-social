@@ -1,6 +1,5 @@
-import common.admin as a
 
-from tornado.gen import coroutine
+import anthill.common.admin as a
 
 
 class RootAdminController(a.AdminController):

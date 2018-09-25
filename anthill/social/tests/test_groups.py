@@ -1,16 +1,16 @@
-from tornado.gen import coroutine, Return, sleep
+
+from tornado.gen import multi
 from tornado.testing import gen_test
 
-# noinspection PyUnresolvedReferences
-from server import SocialServer
-from model.group import GroupFlags, GroupJoinMethod, GroupError, GroupsModel
-from model.request import NoSuchRequest
+from .. server import SocialServer
+from .. model.group import GroupFlags, GroupJoinMethod, GroupError, GroupsModel
+from .. model.request import NoSuchRequest
 
-import common.testing
-import options as _opts
+from anthill.common import testing
+from .. import options as _opts
 
 
-class GroupsTestCase(common.testing.ServerTestCase):
+class GroupsTestCase(testing.ServerTestCase):
     GAMESPACE_ID = 1
     ACCOUNT_A = 1
     ACCOUNT_B = 2
@@ -26,29 +26,29 @@ class GroupsTestCase(common.testing.ServerTestCase):
         return SocialServer(db)
 
     @gen_test
-    def test_group_create(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_group_create(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.FREE), 50, GroupsTestCase.ACCOUNT_A, {})
 
         self.assertGreater(group_id, 0, "New group ID must be positive")
 
     @gen_test
-    def test_free_join(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_free_join(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.FREE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"})
 
-        members = yield self.application.groups.list_group_participants(GroupsTestCase.GAMESPACE_ID, group_id)
+        members = await self.application.groups.list_group_participants(GroupsTestCase.GAMESPACE_ID, group_id)
 
         self.assertEquals(len(members), 1, "Group should have one member from scratch")
         self.assertEquals(members[0].account, GroupsTestCase.ACCOUNT_A, "Member should be ACCOUNT_A")
         self.assertEquals(members[0].role, GroupsModel.MAXIMUM_ROLE, "Member role should be max")
 
-        yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                  GroupsTestCase.ACCOUNT_B, {"test": "b"})
 
-        members = yield self.application.groups.list_group_participants(GroupsTestCase.GAMESPACE_ID, group_id)
+        members = await self.application.groups.list_group_participants(GroupsTestCase.GAMESPACE_ID, group_id)
 
         members = {
             member.account: member
@@ -62,126 +62,126 @@ class GroupsTestCase(common.testing.ServerTestCase):
                           "Free member role should be min")
 
     @gen_test
-    def test_same_join(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_same_join(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.FREE), 50, GroupsTestCase.ACCOUNT_A, {})
 
-        members = yield self.application.groups.list_group_participants(GroupsTestCase.GAMESPACE_ID, group_id)
+        members = await self.application.groups.list_group_participants(GroupsTestCase.GAMESPACE_ID, group_id)
         self.assertEquals(len(members), 1, "Group should have one member from scratch")
         self.assertEquals(members[0].account, GroupsTestCase.ACCOUNT_A, "Member should be ACCOUNT_A")
 
         with self.assertRaises(GroupError) as e:
-            yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+            await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                      GroupsTestCase.ACCOUNT_A, {"test": "b"})
 
         self.assertEqual(e.exception.code, 409)
 
-        members = yield self.application.groups.list_group_participants(GroupsTestCase.GAMESPACE_ID, group_id)
+        members = await self.application.groups.list_group_participants(GroupsTestCase.GAMESPACE_ID, group_id)
         self.assertEquals(len(members), 1, "Group should have one member from scratch")
         self.assertEquals(members[0].account, GroupsTestCase.ACCOUNT_A, "Member should be ACCOUNT_A")
 
     @gen_test
-    def test_join_limit(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_join_limit(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.FREE), 2, GroupsTestCase.ACCOUNT_A, {})
 
-        yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                  GroupsTestCase.ACCOUNT_B, {"test": "a"})
 
         with self.assertRaises(GroupError) as e:
-            yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+            await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                      GroupsTestCase.ACCOUNT_C, {"test": "b"})
 
     @gen_test
-    def test_concurrent_group_profile(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_concurrent_group_profile(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {"value": 1}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.FREE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"})
 
-        yield [self.application.groups.update_group(
+        await multi([self.application.groups.update_group(
             GroupsTestCase.GAMESPACE_ID, group_id,
             GroupsTestCase.ACCOUNT_A, {"value": {"@func": "++", "@value": 1}}
-        ) for x in xrange(0, 10)]
+        ) for x in range(0, 10)])
 
-        updated_group = yield self.application.groups.get_group(GroupsTestCase.GAMESPACE_ID, group_id)
+        updated_group = await self.application.groups.get_group(GroupsTestCase.GAMESPACE_ID, group_id)
 
         self.assertEquals(updated_group.profile, {"value": 11})
 
     @gen_test
-    def test_concurrent_group_participation_profile(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_concurrent_group_participation_profile(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.FREE), 50, GroupsTestCase.ACCOUNT_A, {"value": 100})
 
-        yield [self.application.groups.update_group_participation(
+        await multi([self.application.groups.update_group_participation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_A,
             {"value": {"@func": "--", "@value": 1}}
-        ) for x in xrange(0, 10)]
+        ) for x in range(0, 10)])
 
-        updated_group_participation = yield self.application.groups.get_group_participation(
+        updated_group_participation = await self.application.groups.get_group_participation(
             GroupsTestCase.GAMESPACE_ID, group_id,
             GroupsTestCase.ACCOUNT_A)
 
         self.assertEquals(updated_group_participation.profile, {"value": 90})
 
     @gen_test
-    def test_roles(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_roles(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.FREE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"})
 
-        yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                  GroupsTestCase.ACCOUNT_B, {"test": "b"})
 
-        yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                  GroupsTestCase.ACCOUNT_C, {"test": "c"})
 
         # as an owner I should be able to do that
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_C,
             1000, [])
 
         # downgrade own roles
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C, GroupsTestCase.ACCOUNT_C,
             500, [])
 
         # now try to push them back up
         with self.assertRaises(GroupError):
-            yield self.application.groups.update_group_participation_permissions(
+            await self.application.groups.update_group_participation_permissions(
                 GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C, GroupsTestCase.ACCOUNT_C,
                 1000, [])
 
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_B,
             200, [])
 
         with self.assertRaises(GroupError):
-            yield self.application.groups.update_group_participation_permissions(
+            await self.application.groups.update_group_participation_permissions(
                 GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_B, GroupsTestCase.ACCOUNT_A,
                 100, [])
 
     @gen_test
-    def test_owner(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_owner(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.FREE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"})
 
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_A,
             999999999, [])
 
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_A,
             0, [])
 
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_A,
             5000, ["root"])
 
-        updated_group_participation = yield self.application.groups.get_group_participation(
+        updated_group_participation = await self.application.groups.get_group_participation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A)
 
         self.assertEqual(updated_group_participation.permissions, {"root"},
@@ -189,96 +189,96 @@ class GroupsTestCase(common.testing.ServerTestCase):
         self.assertEqual(updated_group_participation.role, 5000, "Role should be 5000")
 
     @gen_test
-    def test_ownership(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_ownership(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.FREE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"})
 
-        yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                  GroupsTestCase.ACCOUNT_B, {"test": "b"})
 
         with (self.assertRaises(GroupError)) as e:
-            yield self.application.groups.leave_group(GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A)
+            await self.application.groups.leave_group(GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A)
         self.assertEqual(e.exception.code, 409)
 
         with (self.assertRaises(GroupError)) as e:
-            yield self.application.groups.transfer_ownership(GroupsTestCase.GAMESPACE_ID, group_id,
+            await self.application.groups.transfer_ownership(GroupsTestCase.GAMESPACE_ID, group_id,
                                                              GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_C)
         self.assertEqual(e.exception.code, 406)
 
-        yield self.application.groups.transfer_ownership(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.transfer_ownership(GroupsTestCase.GAMESPACE_ID, group_id,
                                                          GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_B)
-        yield self.application.groups.leave_group(GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A)
+        await self.application.groups.leave_group(GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A)
 
     @gen_test
-    def test_roles_permissions(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_roles_permissions(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.FREE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"})
 
-        yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                  GroupsTestCase.ACCOUNT_B, {"test": "b"})
 
-        yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                  GroupsTestCase.ACCOUNT_C, {"test": "c"})
 
-        yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                  GroupsTestCase.ACCOUNT_D, {"test": "d"})
 
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_B,
             200, ["cat", "dog", "cow"])
 
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_B, GroupsTestCase.ACCOUNT_C,
             199, ["cow", "cat", "fox"])
 
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C, GroupsTestCase.ACCOUNT_D,
             198, ["cat", "chicken", "pig"])
 
-        updated_group_participation = yield self.application.groups.get_group_participation(
+        updated_group_participation = await self.application.groups.get_group_participation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C)
 
         self.assertEqual(updated_group_participation.permissions, {"cat", "cow"},
                          "Permissions of account C should be cat,cow")
 
-        updated_group_participation = yield self.application.groups.get_group_participation(
+        updated_group_participation = await self.application.groups.get_group_participation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_D)
 
         self.assertEqual(updated_group_participation.permissions, {"cat"},
                          "Permissions of account D should be cat")
 
     @gen_test
-    def test_kick(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_kick(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.FREE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"})
 
-        yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                  GroupsTestCase.ACCOUNT_B, {"test": "b"})
 
-        yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                  GroupsTestCase.ACCOUNT_C, {"test": "c"})
 
-        yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+        await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                  GroupsTestCase.ACCOUNT_D, {"test": "d"})
 
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_B,
             500, [])
 
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_C,
             400, [GroupsModel.PERMISSION_KICK])
 
-        yield self.application.groups.update_group_participation_permissions(
+        await self.application.groups.update_group_participation_permissions(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_D,
             300, [])
 
         # kick an owner
         with self.assertRaises(GroupError) as e:
-            yield self.application.groups.kick_from_group(
+            await self.application.groups.kick_from_group(
                 GroupsTestCase.GAMESPACE_ID, group_id,
                 GroupsTestCase.ACCOUNT_C, GroupsTestCase.ACCOUNT_A)
 
@@ -286,7 +286,7 @@ class GroupsTestCase(common.testing.ServerTestCase):
 
         # kick higher role
         with self.assertRaises(GroupError) as e:
-            yield self.application.groups.kick_from_group(
+            await self.application.groups.kick_from_group(
                 GroupsTestCase.GAMESPACE_ID, group_id,
                 GroupsTestCase.ACCOUNT_C, GroupsTestCase.ACCOUNT_B)
 
@@ -294,54 +294,54 @@ class GroupsTestCase(common.testing.ServerTestCase):
 
         # kick with no permissions to
         with self.assertRaises(GroupError) as e:
-            yield self.application.groups.kick_from_group(
+            await self.application.groups.kick_from_group(
                 GroupsTestCase.GAMESPACE_ID, group_id,
                 GroupsTestCase.ACCOUNT_B, GroupsTestCase.ACCOUNT_C)
 
         self.assertEqual(e.exception.code, 406, "Should be 'You have no permission to kick'")
 
         # should kick just fine
-        yield self.application.groups.kick_from_group(
+        await self.application.groups.kick_from_group(
             GroupsTestCase.GAMESPACE_ID, group_id,
             GroupsTestCase.ACCOUNT_C, GroupsTestCase.ACCOUNT_D)
 
         # kick being owner
-        yield self.application.groups.kick_from_group(
+        await self.application.groups.kick_from_group(
             GroupsTestCase.GAMESPACE_ID, group_id,
             GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_C)
 
     @gen_test
-    def test_approve(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_approve(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.APPROVE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"})
 
         # free join to approve-based group is prohibited
         with (self.assertRaises(GroupError)) as e:
-            yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+            await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                      GroupsTestCase.ACCOUNT_B, {"test": "b"})
 
         self.assertEqual(e.exception.code, 409)
 
-        key_b = yield self.application.groups.join_group_request(
+        key_b = await self.application.groups.join_group_request(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_B, {"bbb": 555})
-        key_c = yield self.application.groups.join_group_request(
+        key_c = await self.application.groups.join_group_request(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C, {"ccc": 666})
-        key_d = yield self.application.groups.join_group_request(
+        key_d = await self.application.groups.join_group_request(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_D, {"ddd": 777})
 
-        yield self.application.groups.approve_join_group(
+        await self.application.groups.approve_join_group(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_B,
             900, key_b, ["test"])
 
         # give account C a permission to approve other requests
-        yield self.application.groups.approve_join_group(
+        await self.application.groups.approve_join_group(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_C,
             950, key_c, [GroupsModel.PERMISSION_REQUEST_APPROVAL])
 
         # approve by B who has no such permission
         with self.assertRaises(GroupError) as e:
-            yield self.application.groups.approve_join_group(
+            await self.application.groups.approve_join_group(
                 GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_B, GroupsTestCase.ACCOUNT_D,
                 800, key_d, [])
 
@@ -349,22 +349,22 @@ class GroupsTestCase(common.testing.ServerTestCase):
 
         # approve by C but raise the role more than us
         with self.assertRaises(GroupError) as e:
-            yield self.application.groups.approve_join_group(
+            await self.application.groups.approve_join_group(
                 GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C, GroupsTestCase.ACCOUNT_D,
                 960, key_d, [])
 
         self.assertEqual(e.exception.code, 409, "Should be 'Approved role cannot be higher than your role'")
 
         # do the actual approval
-        yield self.application.groups.approve_join_group(
+        await self.application.groups.approve_join_group(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C, GroupsTestCase.ACCOUNT_D,
             940, key_d, [])
 
-        updated_group_participation_b = yield self.application.groups.get_group_participation(
+        updated_group_participation_b = await self.application.groups.get_group_participation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_B)
-        updated_group_participation_c = yield self.application.groups.get_group_participation(
+        updated_group_participation_c = await self.application.groups.get_group_participation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C)
-        updated_group_participation_d = yield self.application.groups.get_group_participation(
+        updated_group_participation_d = await self.application.groups.get_group_participation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_D)
 
         self.assertEquals(updated_group_participation_b.role, 900)
@@ -376,95 +376,95 @@ class GroupsTestCase(common.testing.ServerTestCase):
 
         # use same key twice
         with (self.assertRaises(NoSuchRequest)):
-            yield self.application.groups.approve_join_group(
+            await self.application.groups.approve_join_group(
                 GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A, GroupsTestCase.ACCOUNT_B,
                 950, key_b, ["test"])
 
     @gen_test
-    def test_invite(self):
-        group_id = yield self.application.groups.create_group(
+    async def test_invite(self):
+        group_id = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.INVITE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"})
 
         # free join to invite-based group is prohibited
         with (self.assertRaises(GroupError)) as e:
-            yield self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
+            await self.application.groups.join_group(GroupsTestCase.GAMESPACE_ID, group_id,
                                                      GroupsTestCase.ACCOUNT_B, {"test": "b"})
 
         self.assertEqual(e.exception.code, 409)
 
-        key_b = yield self.application.groups.invite_to_group(
+        key_b = await self.application.groups.invite_to_group(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A,
             GroupsTestCase.ACCOUNT_B, 500, [])
 
-        key_c = yield self.application.groups.invite_to_group(
+        key_c = await self.application.groups.invite_to_group(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_A,
             GroupsTestCase.ACCOUNT_C, 600, [GroupsModel.PERMISSION_SEND_INVITE])
 
-        yield self.application.groups.accept_group_invitation(
+        await self.application.groups.accept_group_invitation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_B, {"b": True}, key_b)
 
-        yield self.application.groups.accept_group_invitation(
+        await self.application.groups.accept_group_invitation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C, {"c": True}, key_c)
 
-        updated_group_participation_b = yield self.application.groups.get_group_participation(
+        updated_group_participation_b = await self.application.groups.get_group_participation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_B)
 
         self.assertEquals(updated_group_participation_b.role, 500)
         self.assertEquals(updated_group_participation_b.profile, {"b": True})
 
-        updated_group_participation_c = yield self.application.groups.get_group_participation(
+        updated_group_participation_c = await self.application.groups.get_group_participation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C)
 
         self.assertEquals(updated_group_participation_c.role, 600)
         self.assertEquals(updated_group_participation_c.profile, {"c": True})
 
         with (self.assertRaises(GroupError)) as e:
-            yield self.application.groups.invite_to_group(
+            await self.application.groups.invite_to_group(
                 GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_B,
                 GroupsTestCase.ACCOUNT_D, 400, [])
 
         self.assertEqual(e.exception.code, 406, "Should be 'You have no permission to send invites'")
 
-        key_d = yield self.application.groups.invite_to_group(
+        key_d = await self.application.groups.invite_to_group(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_C,
             GroupsTestCase.ACCOUNT_D, 400, [])
 
         # use wrong key
         with (self.assertRaises(GroupError)) as e:
-            yield self.application.groups.accept_group_invitation(
+            await self.application.groups.accept_group_invitation(
                 GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_D, {"d": False}, key_c)
 
         self.assertEqual(e.exception.code, 410, "Should be 'No such invite request'")
 
-        yield self.application.groups.accept_group_invitation(
+        await self.application.groups.accept_group_invitation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_D, {"d": False}, key_d)
 
-        updated_group_participation_d = yield self.application.groups.get_group_participation(
+        updated_group_participation_d = await self.application.groups.get_group_participation(
             GroupsTestCase.GAMESPACE_ID, group_id, GroupsTestCase.ACCOUNT_D)
 
         self.assertEquals(updated_group_participation_d.role, 400)
         self.assertEquals(updated_group_participation_d.profile, {"d": False})
 
     @gen_test
-    def test_search(self):
-        group_a = yield self.application.groups.create_group(
+    async def test_search(self):
+        group_a = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.INVITE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"},
             group_name="Lorem ipsum dolor sit amet, consectetur adipiscing elit, including same text at the end!")
 
-        group_b = yield self.application.groups.create_group(
+        group_b = await self.application.groups.create_group(
             GroupsTestCase.GAMESPACE_ID, {}, GroupFlags([]),
             GroupJoinMethod(GroupJoinMethod.INVITE), 50, GroupsTestCase.ACCOUNT_A, {"test": "a"},
             group_name="The quick brown fox jumps over the lazy dog, including same text at the end!")
 
-        result_1 = yield self.application.groups.search_groups(GroupsTestCase.GAMESPACE_ID, "quick brown fox")
+        result_1 = await self.application.groups.search_groups(GroupsTestCase.GAMESPACE_ID, "quick brown fox")
         self.assertEquals(len(result_1), 1)
         self.assertEquals(result_1[0].group_id, group_b)
 
-        result_2 = yield self.application.groups.search_groups(GroupsTestCase.GAMESPACE_ID, "Lor")
+        result_2 = await self.application.groups.search_groups(GroupsTestCase.GAMESPACE_ID, "Lor")
         self.assertEquals(len(result_2), 1)
         self.assertEquals(result_2[0].group_id, group_a)
 
-        result_3 = yield self.application.groups.search_groups(GroupsTestCase.GAMESPACE_ID, "including same text")
+        result_3 = await self.application.groups.search_groups(GroupsTestCase.GAMESPACE_ID, "including same text")
         self.assertEquals(len(result_3), 2)

@@ -1,15 +1,13 @@
+from tornado.gen import multi
 
-from tornado.gen import coroutine, Return, multi
+from anthill.common import Flags, Enum
+from anthill.common.internal import Internal, InternalError
+from anthill.common.model import Model
+from anthill.common.validate import validate
+from anthill.common.database import DatabaseError, DuplicateError
+from anthill.common.profile import DatabaseProfile, NoDataError, ProfileError
 
-from common import Flags, Enum
-
-from common.internal import Internal, InternalError
-from common.model import Model
-from common.validate import validate
-from common.database import DatabaseError, DuplicateError
-from common.profile import DatabaseProfile, NoDataError, ProfileError
-
-from request import RequestType, NoSuchRequest, RequestError
+from .request import RequestType, NoSuchRequest, RequestError
 
 import ujson
 import logging
@@ -48,9 +46,8 @@ class GroupParticipationProfile(DatabaseProfile):
     def __parse_profile__(profile):
         return profile
 
-    @coroutine
-    def get(self):
-        group = yield self.conn.get(
+    async def get(self):
+        group = await self.conn.get(
             """
                 SELECT `participation_profile`
                 FROM `group_participants`
@@ -60,18 +57,16 @@ class GroupParticipationProfile(DatabaseProfile):
             """, self.account_id, self.group_id, self.gamespace_id)
 
         if group:
-            raise Return(GroupProfile.__parse_profile__(group["participation_profile"]))
+            return GroupProfile.__parse_profile__(group["participation_profile"])
 
         raise NoDataError()
 
-    @coroutine
-    def insert(self, data):
+    async def insert(self, data):
         raise ProfileError("Insertion is not supported")
 
-    @coroutine
-    def update(self, data):
+    async def update(self, data):
         encoded = GroupProfile.__encode_profile__(data)
-        yield self.conn.execute(
+        await self.conn.execute(
             """
                 UPDATE `group_participants`
                 SET `participation_profile`=%s
@@ -94,9 +89,8 @@ class GroupProfile(DatabaseProfile):
     def __parse_profile__(profile):
         return profile
 
-    @coroutine
-    def get(self):
-        group = yield self.conn.get(
+    async def get(self):
+        group = await self.conn.get(
             """
                 SELECT `group_profile`
                 FROM `groups`
@@ -106,18 +100,16 @@ class GroupProfile(DatabaseProfile):
             """, self.group_id, self.gamespace_id)
 
         if group:
-            raise Return(GroupProfile.__parse_profile__(group["group_profile"]))
+            return GroupProfile.__parse_profile__(group["group_profile"])
 
         raise NoDataError()
 
-    @coroutine
-    def insert(self, data):
+    async def insert(self, data):
         raise ProfileError("Insertion is not supported")
 
-    @coroutine
-    def update(self, data):
+    async def update(self, data):
         encoded = GroupProfile.__encode_profile__(data)
-        yield self.conn.execute(
+        await self.conn.execute(
             """
                 UPDATE `groups`
                 SET `group_profile`=%s
@@ -140,9 +132,8 @@ class GroupBatchProfile(DatabaseProfile):
     def __parse_profile__(profile):
         return profile
 
-    @coroutine
-    def get(self):
-        groups = yield self.conn.query(
+    async def get(self):
+        groups = await self.conn.query(
             """
                 SELECT `group_profile`, `group_id`
                 FROM `groups`
@@ -153,17 +144,15 @@ class GroupBatchProfile(DatabaseProfile):
         if len(groups) != len(self.group_ids):
             raise NoDataError()
 
-        raise Return({
+        return {
             str(group["group_id"]): GroupProfile.__parse_profile__(group["group_profile"])
             for group in groups
-        })
+        }
 
-    @coroutine
-    def insert(self, data):
+    async def insert(self, data):
         raise ProfileError("Insertion is not supported")
 
-    @coroutine
-    def update(self, data):
+    async def update(self, data):
 
         if not isinstance(data, dict):
             raise ProfileError("Data is not a dict")
@@ -171,11 +160,11 @@ class GroupBatchProfile(DatabaseProfile):
         args = []
         values = []
 
-        for group_id, group_profile in data.iteritems():
+        for group_id, group_profile in data.items():
             args.extend([group_id, self.gamespace_id, GroupProfile.__encode_profile__(group_profile)])
             values.append("(%s, %s, 0, %s)")
 
-        yield self.conn.execute(
+        await self.conn.execute(
             """
                 INSERT INTO `groups`
                 (`group_id`, `gamespace_id`, `group_owner`, `group_profile`) 
@@ -225,7 +214,6 @@ class GroupJoinMethod(Enum):
 
 
 class GroupsModel(Model):
-
     MAXIMUM_ROLE = 1000
     MINIMUM_ROLE = 0
 
@@ -264,17 +252,16 @@ class GroupsModel(Model):
     def has_delete_account_event(self):
         return True
 
-    @coroutine
-    def accounts_deleted(self, gamespace, accounts, gamespace_only):
+    async def accounts_deleted(self, gamespace, accounts, gamespace_only):
         try:
             if gamespace_only:
-                yield self.db.execute(
+                await self.db.execute(
                     """
                         DELETE FROM `group_participants`
                         WHERE `gamespace_id`=%s AND `account_id` IN %s;
                     """, gamespace, accounts)
             else:
-                yield self.db.execute(
+                await self.db.execute(
                     """
                         DELETE FROM `group_participants`
                         WHERE `account_id` IN %s;
@@ -282,12 +269,11 @@ class GroupsModel(Model):
         except DatabaseError as e:
             raise GroupError(500, "Failed to delete group participations: " + e.args[1])
 
-    @coroutine
     @validate(gamespace_id="int", group_profile="json_dict", group_flags=GroupFlags,
               group_join_method=GroupJoinMethod, max_members="int", account_id="int",
               participation_profile="json_dict", group_name="str")
-    def create_group(self, gamespace_id, group_profile, group_flags, group_join_method, max_members,
-                     owner_account_id, participation_profile, group_name=None):
+    async def create_group(self, gamespace_id, group_profile, group_flags, group_join_method, max_members,
+                           owner_account_id, participation_profile, group_name=None):
 
         if max_members < 2:
             raise GroupError(400, "Max members cannot be lass than {0}".format(GroupsModel.MIN_MEMBERS_LIMIT))
@@ -299,12 +285,12 @@ class GroupsModel(Model):
         max_members -= 1
         group_id = None
 
-        with (yield self.db.acquire()) as db:
+        async with self.db.acquire() as db:
 
             # create the group first
 
             try:
-                group_id = yield db.insert(
+                group_id = await db.insert(
                     """
                         INSERT INTO `groups`
                         (`gamespace_id`, `group_profile`, `group_flags`, `group_join_method`, 
@@ -318,7 +304,7 @@ class GroupsModel(Model):
             # then join to the group automatically as there
 
             try:
-                yield db.execute(
+                await db.execute(
                     """
                         INSERT INTO `group_participants`
                         (`gamespace_id`, `group_id`, `account_id`, `participation_role`, `participation_profile`,
@@ -328,7 +314,7 @@ class GroupsModel(Model):
                     ujson.dumps(participation_profile), "")
             except DatabaseError as e:
                 try:
-                    yield self.delete_group(gamespace_id, group_id, db=db)
+                    await self.delete_group(gamespace_id, group_id, db=db)
                 except GroupError:
                     pass  # we should try at least
 
@@ -336,106 +322,101 @@ class GroupsModel(Model):
 
             if GroupFlags.MESSAGE_SUPPORT in group_flags:
                 try:
-                    yield self.internal.request(
+                    await self.internal.request(
                         "message", "create_group",
                         gamespace=gamespace_id, group_class=GroupsModel.GROUP_CLASS, group_key=str(group_id),
                         join_account_id=owner_account_id, join_role="member")
                 except InternalError as e:
                     try:
-                        yield self.delete_group(gamespace_id, group_id, db=db)
+                        await self.delete_group(gamespace_id, group_id, db=db)
                     except GroupError:
                         pass
 
                     raise GroupError(500, "Failed to create in-message group: " + str(e.message))
 
-        raise Return(group_id)
+        return group_id
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", group_profile="json_dict",
               path="json_list_of_strings", merge="bool")
-    def update_group_no_check(self, gamespace_id, group_id, group_profile, path=None, merge=True):
+    async def update_group_no_check(self, gamespace_id, group_id, group_profile, path=None, merge=True):
 
         profile = GroupProfile(self.db, gamespace_id, group_id)
 
         try:
-            result = yield profile.set_data(group_profile, path=path, merge=merge)
+            result = await profile.set_data(group_profile, path=path, merge=merge)
         except NoDataError:
             raise GroupError(404, "No such group")
         except ProfileError as e:
             raise GroupError(409, "Failed to update group profile: " + e.message)
 
-        raise Return(result)
+        return result
 
-    @coroutine
     @validate(gamespace_id="int", group_profiles="json_dict",
               path="json_list_of_strings", merge="bool")
-    def update_groups_no_check(self, gamespace_id, group_profiles, path=None, merge=True):
+    async def update_groups_no_check(self, gamespace_id, group_profiles, path=None, merge=True):
 
         calls = {}
 
-        for group_id, group_profile in group_profiles.iteritems():
+        for group_id, group_profile in group_profiles.items():
             profile = GroupProfile(self.db, gamespace_id, group_id)
             calls[group_id] = profile.set_data(group_profile, path=path, merge=merge)
 
         try:
-            result = yield calls
+            result = await multi(calls)
         except NoDataError:
             raise GroupError(404, "No such group(s)")
         except ProfileError as e:
             raise GroupError(409, "Failed to update group profile: " + e.message)
 
-        raise Return(result)
+        return result
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", group_profile="json_dict",
               merge="bool", notify="json_dict", authoritative="bool")
-    def update_group(self, gamespace_id, group_id, account_id, group_profile, merge=True,
-                     notify=None, authoritative=False):
+    async def update_group(self, gamespace_id, group_id, account_id, group_profile, merge=True,
+                           notify=None, authoritative=False):
 
-        has_participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
+        has_participation = await self.get_group_participation(gamespace_id, group_id, account_id)
         if not has_participation:
             raise GroupError(404, "Player has not participated this group")
 
         profile = GroupProfile(self.db, gamespace_id, group_id)
 
         try:
-            result = yield profile.set_data(group_profile, None, merge=merge)
+            result = await profile.set_data(group_profile, None, merge=merge)
         except NoDataError:
             raise GroupError(404, "No such group")
         except ProfileError as e:
             raise GroupError(409, "Failed to update group profile: " + e.message)
 
         if notify:
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
                 GroupsModel.MESSAGE_GROUP_PROFILE_UPDATED, notify, authoritative=authoritative)
 
-        raise Return(result)
+        return result
 
-    @coroutine
     @validate(gamespace_id="int", group_profiles="json_dict_of_dicts", merge="bool")
-    def update_groups(self, gamespace_id, group_profiles, merge=True):
+    async def update_groups(self, gamespace_id, group_profiles, merge=True):
 
         profiles = GroupBatchProfile(self.db, gamespace_id, group_profiles.keys())
 
         try:
-            result = yield profiles.set_data(group_profiles, None, merge=merge)
+            result = await profiles.set_data(group_profiles, None, merge=merge)
         except NoDataError:
             raise GroupError(404, "No such group")
         except ProfileError as e:
             raise GroupError(409, "Failed to update group profile: " + e.message)
 
-        raise Return(result)
+        return result
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", name="str", notify="json_dict")
-    def rename_group(self, gamespace_id, group_id, account_id, name, notify=None):
+    async def rename_group(self, gamespace_id, group_id, account_id, name, notify=None):
 
-        has_participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
+        has_participation = await self.get_group_participation(gamespace_id, group_id, account_id)
         if not has_participation:
             raise GroupError(404, "Player has not participated this group")
 
-        yield self.db.execute(
+        await self.db.execute(
             """
                 UPDATE `groups`
                 SET `group_name`=%s
@@ -444,17 +425,16 @@ class GroupsModel(Model):
             """, name, gamespace_id, group_id)
 
         if notify:
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
                 GroupsModel.MESSAGE_GROUP_RENAMED, notify)
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", name="str",
               join_method=GroupJoinMethod, notify="json_dict", authoritative="bool")
-    def update_group_summary(self, gamespace_id, group_id, account_id, name=None, join_method=None,
-                             notify=None, authoritative=False):
+    async def update_group_summary(self, gamespace_id, group_id, account_id, name=None, join_method=None,
+                                   notify=None, authoritative=False):
 
-        has_participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
+        has_participation = await self.get_group_participation(gamespace_id, group_id, account_id)
         if not has_participation:
             raise GroupError(404, "Player has not participated this group")
 
@@ -475,7 +455,7 @@ class GroupsModel(Model):
         data.append(gamespace_id)
         data.append(group_id)
 
-        yield self.db.execute(
+        await self.db.execute(
             u"""
                 UPDATE `groups`
                 SET {0}
@@ -484,22 +464,21 @@ class GroupsModel(Model):
             """.format(u", ".join(query)), *data)
 
         if notify:
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
                 GroupsModel.MESSAGE_GROUP_RENAMED, notify, authoritative=authoritative)
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", updater_account_id="int",
               participation_account_id="int", participation_profile="json_dict",
               merge="bool", notify="json_dict", authoritative="bool")
-    def update_group_participation(self, gamespace_id, group_id, updater_account_id, participation_account_id,
-                                   participation_profile, merge=True, notify=None, authoritative=False):
+    async def update_group_participation(self, gamespace_id, group_id, updater_account_id, participation_account_id,
+                                         participation_profile, merge=True, notify=None, authoritative=False):
 
-        group = yield self.get_group(gamespace_id, group_id)
+        group = await self.get_group(gamespace_id, group_id)
 
         if not group.is_owner(updater_account_id):
             if str(participation_account_id) != str(updater_account_id):
-                higher = yield self.check_group_participation_role_higher(
+                higher = await self.check_group_participation_role_higher(
                     gamespace_id, group_id, updater_account_id, participation_account_id)
 
                 if not higher:
@@ -508,31 +487,30 @@ class GroupsModel(Model):
         profile = GroupParticipationProfile(self.db, gamespace_id, group_id, participation_account_id)
 
         try:
-            result = yield profile.set_data(participation_profile, None, merge=merge)
+            result = await profile.set_data(participation_profile, None, merge=merge)
         except NoDataError:
             raise NoSuchParticipation()
         except ProfileError as e:
             raise GroupError(500, "Failed to update participation profile: " + e.message)
 
         if notify:
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), updater_account_id,
                 GroupsModel.MESSAGE_PARTICIPATION_PROFILE_UPDATED, notify, authoritative=authoritative)
 
-        raise Return(result)
+        return result
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", updater_account_id="int", participation_account_id="int",
               participation_role="int", participation_permissions="json_list_of_str_name",
               notify="json_dict", authoritative="bool")
-    def update_group_participation_permissions(
+    async def update_group_participation_permissions(
             self, gamespace_id, group_id, updater_account_id, participation_account_id,
             participation_role, participation_permissions, notify=None, authoritative=False):
 
-        group = yield self.get_group(gamespace_id, group_id)
+        group = await self.get_group(gamespace_id, group_id)
 
         if group.is_owner(updater_account_id):
-            yield self.__internal_update_group_participation_permissions__(
+            await self.__internal_update_group_participation_permissions__(
                 gamespace_id, group_id, updater_account_id, participation_account_id,
                 participation_role, participation_permissions,
                 notify=notify, authoritative=authoritative)
@@ -544,13 +522,13 @@ class GroupsModel(Model):
                 def check_increase(old):
                     return old >= participation_role
 
-                yield self.__internal_update_group_participation_permissions__(
+                await self.__internal_update_group_participation_permissions__(
                     gamespace_id, group_id, updater_account_id, participation_account_id, participation_role,
                     participation_permissions, role_callback=check_increase,
                     notify=notify, authoritative=authoritative)
             else:
 
-                my_participation = yield self.get_group_participation(
+                my_participation = await self.get_group_participation(
                     gamespace_id, group_id, updater_account_id)
 
                 my_role = my_participation.role
@@ -564,19 +542,18 @@ class GroupsModel(Model):
                 def check_roles(old):
                     return my_role > old
 
-                yield self.__internal_update_group_participation_permissions__(
+                await self.__internal_update_group_participation_permissions__(
                     gamespace_id, group_id, updater_account_id, participation_account_id,
                     participation_role, participation_permissions, role_callback=check_roles,
                     notify=notify, authoritative=authoritative)
 
-    @coroutine
-    def __internal_update_group_participation_permissions__(
+    async def __internal_update_group_participation_permissions__(
             self, gamespace_id, group_id, updater_account_id, account_id, participation_role,
             participation_permissions, role_callback=None, notify=None, authoritative=False):
 
-        with (yield self.db.acquire(auto_commit=False)) as db:
+        async with self.db.acquire(auto_commit=False) as db:
             try:
-                role = yield db.get(
+                role = await db.get(
                     """
                         SELECT `participation_role`, `participation_permissions`
                         FROM `group_participants`
@@ -594,7 +571,7 @@ class GroupsModel(Model):
                     if not role_callback(old_role):
                         raise GroupError(409, "Cannot update role")
 
-                yield db.execute(
+                await db.execute(
                     """
                         UPDATE `group_participants`
                         SET `participation_role`=%s, `participation_permissions`=%s
@@ -605,19 +582,18 @@ class GroupsModel(Model):
             except DatabaseError as e:
                 raise GroupError(500, "Failed to update role: " + str(e.args[1]))
             finally:
-                yield db.commit()
+                await db.commit()
 
         if notify:
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), updater_account_id,
                 GroupsModel.MESSAGE_PERMISSIONS_UPDATED, notify, authoritative=authoritative)
 
-    @coroutine
-    def __send_message__(self, gamespace_id, recipient_class, recipient_key,
-                         account_id, message_type, payload, flags=None, authoritative=False):
+    async def __send_message__(self, gamespace_id, recipient_class, recipient_key,
+                               account_id, message_type, payload, flags=None, authoritative=False):
 
         try:
-            yield self.internal.request(
+            await self.internal.request(
                 "message", "send_message",
                 gamespace=gamespace_id, sender=account_id,
                 recipient_class=recipient_class, recipient_key=recipient_key,
@@ -626,11 +602,10 @@ class GroupsModel(Model):
         except InternalError:
             pass  # well
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int")
-    def get_group(self, gamespace_id, group_id, db=None):
+    async def get_group(self, gamespace_id, group_id, db=None):
         try:
-            group = yield (db or self.db).get(
+            group = await (db or self.db).get(
                 """
                     SELECT *
                     FROM `groups`
@@ -643,13 +618,12 @@ class GroupsModel(Model):
             if not group:
                 raise NoSuchGroup()
 
-            raise Return(GroupAdapter(group))
+            return GroupAdapter(group)
 
-    @coroutine
     @validate(gamespace_id="int", group_ids="json_list_of_ints")
-    def list_groups(self, gamespace_id, group_ids, db=None):
+    async def list_groups(self, gamespace_id, group_ids, db=None):
         try:
-            groups = yield (db or self.db).query(
+            groups = await (db or self.db).query(
                 """
                     SELECT *
                     FROM `groups`
@@ -659,13 +633,12 @@ class GroupsModel(Model):
         except DatabaseError as e:
             raise GroupError(500, "Failed to get a group: " + str(e.args[1]))
         else:
-            raise Return(map(GroupAdapter, groups))
+            return map(GroupAdapter, groups)
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int")
-    def is_group_owner(self, gamespace_id, group_id, account_id, db=None):
+    async def is_group_owner(self, gamespace_id, group_id, account_id, db=None):
         try:
-            data = yield (db or self.db).get(
+            data = await (db or self.db).get(
                 """
                     SELECT COUNT(*) AS result
                     FROM `groups`
@@ -676,38 +649,35 @@ class GroupsModel(Model):
             raise GroupError(500, "Failed to check group ownership: " + str(e.args[1]))
         else:
             if not data:
-                raise Return(False)
+                return False
 
-            raise Return(data["result"] > 0)
+            return data["result"] > 0
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int")
-    def get_group_with_participants(self, gamespace_id, group_id, account_id=None):
-        with (yield self.db.acquire()) as db:
-            group = yield self.get_group(gamespace_id, group_id, db=db)
-            participants = yield self.list_group_participants(gamespace_id, group_id, db=db)
+    async def get_group_with_participants(self, gamespace_id, group_id, account_id=None):
+        async with self.db.acquire() as db:
+            group = await self.get_group(gamespace_id, group_id, db=db)
+            participants = await self.list_group_participants(gamespace_id, group_id, db=db)
             if account_id:
                 my_participant = next((participant for participant in participants
                                        if participant.account == account_id), None)
                 result = (group, participants, my_participant)
             else:
                 result = (group, participants)
-            raise Return(result)
+            return result
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int")
-    def get_group_with_participation(self, gamespace_id, group_id, account_id):
-        with (yield self.db.acquire()) as db:
-            group = yield self.get_group(gamespace_id, group_id, db=db)
-            participation = yield self.get_group_participation(gamespace_id, group_id, account_id, db=db)
+    async def get_group_with_participation(self, gamespace_id, group_id, account_id):
+        async with self.db.acquire() as db:
+            group = await self.get_group(gamespace_id, group_id, db=db)
+            participation = await self.get_group_participation(gamespace_id, group_id, account_id, db=db)
             result = (group, participation)
-            raise Return(result)
+            return result
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int")
-    def get_group_participation(self, gamespace_id, group_id, account_id, db=None):
+    async def get_group_participation(self, gamespace_id, group_id, account_id, db=None):
         try:
-            participation = yield (db or self.db).get(
+            participation = await (db or self.db).get(
                 """
                     SELECT *
                     FROM `group_participants`
@@ -720,17 +690,16 @@ class GroupsModel(Model):
             if not participation:
                 raise NoSuchParticipation()
 
-            raise Return(GroupParticipationAdapter(participation))
+            return GroupParticipationAdapter(participation)
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="json_list_of_ints")
-    def get_group_participants(self, gamespace_id, group_id, account_ids, db=None):
+    async def get_group_participants(self, gamespace_id, group_id, account_ids, db=None):
 
         if not account_ids:
             raise GroupError(400, "Empty account_ids")
 
         try:
-            participants = yield (db or self.db).query(
+            participants = await (db or self.db).query(
                 """
                     SELECT *
                     FROM `group_participants`
@@ -739,16 +708,15 @@ class GroupsModel(Model):
         except DatabaseError as e:
             raise GroupError(500, "Failed to get a group participation: " + str(e.args[1]))
         else:
-            raise Return({
+            return {
                 participant["account_id"]: GroupParticipationAdapter(participant)
                 for participant in participants
-            })
+            }
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int")
-    def has_group_participation(self, gamespace_id, group_id, account_id, db=None):
+    async def has_group_participation(self, gamespace_id, group_id, account_id, db=None):
         try:
-            count = yield (db or self.db).get(
+            count = await (db or self.db).get(
                 """
                     SELECT COUNT(*) AS count
                     FROM `group_participants`
@@ -759,15 +727,14 @@ class GroupsModel(Model):
             raise GroupError(500, "Failed to get a group participation: " + str(e.args[1]))
         else:
             if not count or not count["count"]:
-                raise Return(False)
+                return False
 
-            raise Return(True)
+            return True
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int")
-    def check_group_participation_role_higher(self, gamespace_id, group_id, account_a, account_b, db=None):
+    async def check_group_participation_role_higher(self, gamespace_id, group_id, account_a, account_b, db=None):
         try:
-            result = yield (db or self.db).get(
+            result = await (db or self.db).get(
                 """
                     SELECT IF(
                         (SELECT `participation_role` FROM `group_participants`
@@ -778,24 +745,23 @@ class GroupsModel(Model):
                           WHERE `gamespace_id`=%s AND `group_id`=%s AND `account_id`=%s
                           LIMIT 1)
                     , 1, 0) AS result;
-                """, gamespace_id, group_id, account_a,  gamespace_id, group_id, account_b)
+                """, gamespace_id, group_id, account_a, gamespace_id, group_id, account_b)
         except DatabaseError as e:
             raise GroupError(500, "Failed to get a group participation: " + str(e.args[1]))
         else:
             if not result or not result["result"]:
-                raise Return(False)
+                return False
 
-            raise Return(True)
+            return True
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_ids="json_list_of_ints")
-    def get_group_multiple_participants(self, gamespace_id, group_id, account_ids, db=None):
+    async def get_group_multiple_participants(self, gamespace_id, group_id, account_ids, db=None):
 
         if not account_ids:
             raise GroupError(400, "Empty account_ids")
 
         try:
-            participants = yield (db or self.db).query(
+            participants = await (db or self.db).query(
                 """
                     SELECT *
                     FROM `group_participants`
@@ -808,26 +774,25 @@ class GroupsModel(Model):
             if len(participants) < len(account_ids):
                 raise NoSuchParticipation()
 
-            raise Return({
+            return {
                 int(participation["account_id"]): GroupParticipationAdapter(participation)
                 for participation in participants
-            })
+            }
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int")
-    def delete_group(self, gamespace_id, group_id, db=None):
+    async def delete_group(self, gamespace_id, group_id, db=None):
         if not db:
-            with (yield self.db.acquire()) as db:
-                yield self.delete_group(gamespace_id, group_id, db=db)
+            async with self.db.acquire() as db:
+                await self.delete_group(gamespace_id, group_id, db=db)
             return
 
         try:
-            yield db.execute(
+            await db.execute(
                 """
                     DELETE FROM `group_participants`
                     WHERE `gamespace_id`=%s AND `group_id`=%s;
                 """, gamespace_id, group_id)
-            yield db.execute(
+            await db.execute(
                 """
                     DELETE FROM `groups`
                     WHERE `gamespace_id`=%s AND `group_id`=%s
@@ -836,13 +801,12 @@ class GroupsModel(Model):
         except DatabaseError as e:
             raise GroupError(500, "Failed to delete a group: " + str(e.args[1]))
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", participation_profile="json_dict",
               notify="json_dict", authoritative="bool")
-    def join_group_request(self, gamespace_id, group_id, account_id, participation_profile,
-                           notify=None, authoritative=False):
+    async def join_group_request(self, gamespace_id, group_id, account_id, participation_profile,
+                                 notify=None, authoritative=False):
 
-        group = yield self.get_group(gamespace_id, group_id)
+        group = await self.get_group(gamespace_id, group_id)
 
         if group.free_members == 0:
             raise GroupError(410, "Group is full")
@@ -850,39 +814,37 @@ class GroupsModel(Model):
         if group.join_method != GroupJoinMethod.APPROVE:
             raise GroupError(409, "This group join cannot be requested, it is: {0}".format(str(group.join_method)))
 
-        has_participation = yield self.has_group_participation(
+        has_participation = await self.has_group_participation(
             gamespace_id, group_id, account_id)
 
         if has_participation:
             raise GroupError(406, "Player is already in this group")
 
-        key = yield self.requests.create_request(
+        key = await self.requests.create_request(
             gamespace_id, account_id, RequestType.GROUP, group_id, {
                 "participation_profile": participation_profile
             })
 
         if notify and GroupFlags.MESSAGE_SUPPORT in group.flags:
-
             notify.update({
                 "key": key
             })
 
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS,
                 str(group_id), account_id,
                 GroupsModel.MESSAGE_GROUP_REQUEST, notify,
                 flags=["editable", "deletable"], authoritative=authoritative)
 
-        raise Return(key)
+        return key
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int",
               invite_account_id="int", role="int", permissions="json_list_of_str_name",
               notify="json_dict", authoritative="bool")
-    def invite_to_group(self, gamespace_id, group_id, account_id,
-                        invite_account_id, role, permissions, notify=None, authoritative=False):
+    async def invite_to_group(self, gamespace_id, group_id, account_id,
+                              invite_account_id, role, permissions, notify=None, authoritative=False):
 
-        group = yield self.get_group(gamespace_id, group_id)
+        group = await self.get_group(gamespace_id, group_id)
 
         if group.free_members == 0:
             raise GroupError(410, "Group is full")
@@ -890,7 +852,7 @@ class GroupsModel(Model):
         if group.join_method != GroupJoinMethod.INVITE:
             raise GroupError(409, "This group is not for invites, it is: {0}".format(str(group.join_method)))
 
-        participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
+        participation = await self.get_group_participation(gamespace_id, group_id, account_id)
 
         if not group.is_owner(account_id):
             if not participation.has_permission(GroupsModel.PERMISSION_SEND_INVITE):
@@ -901,7 +863,7 @@ class GroupsModel(Model):
             if role > participation.role:
                 raise GroupError(409, "Invited role cannot be higher than your role")
 
-        key = yield self.requests.create_request(
+        key = await self.requests.create_request(
             gamespace_id, invite_account_id, RequestType.GROUP, group_id, {
                 "role": role,
                 "permissions": permissions
@@ -912,21 +874,20 @@ class GroupsModel(Model):
                 "invite_group_id": str(group_id),
                 "key": key
             })
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, "user", str(invite_account_id), account_id,
                 GroupsModel.MESSAGE_GROUP_INVITE, notify,
                 flags=["editable", "deletable"], authoritative=authoritative)
 
-        raise Return(key)
+        return key
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", approve_account_id="int",
               role="int", key="str", permissions="json_list_of_str_name",
               notify="json_dict", authoritative="bool")
-    def approve_join_group(self, gamespace_id, group_id, account_id, approve_account_id,
-                           role, key, permissions, notify=None, authoritative=False):
+    async def approve_join_group(self, gamespace_id, group_id, account_id, approve_account_id,
+                                 role, key, permissions, notify=None, authoritative=False):
 
-        group = yield self.get_group(gamespace_id, group_id)
+        group = await self.get_group(gamespace_id, group_id)
 
         if group.free_members == 0:
             raise GroupError(410, "Group is full")
@@ -935,7 +896,7 @@ class GroupsModel(Model):
             raise GroupError(409, "This group is not approve-like, it is: {0}".format(str(group.join_method)))
 
         if not group.is_owner(account_id):
-            participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
+            participation = await self.get_group_participation(gamespace_id, group_id, account_id)
 
             if not participation.has_permission(GroupsModel.PERMISSION_REQUEST_APPROVAL):
                 raise GroupError(406, "You have no permission to approve items")
@@ -946,7 +907,7 @@ class GroupsModel(Model):
             if role > participation.role:
                 raise GroupError(409, "Approved role cannot be higher than your role")
 
-        request = yield self.requests.acquire(gamespace_id, approve_account_id, key)
+        request = await self.requests.acquire(gamespace_id, approve_account_id, key)
 
         if request.type != RequestType.GROUP:
             raise GroupError(400, "Bad request object")
@@ -958,7 +919,7 @@ class GroupsModel(Model):
 
         participation_profile = (request.payload or {}).get("participation_profile", {})
 
-        yield self.__internal_join_group__(
+        await self.__internal_join_group__(
             gamespace_id, group_id, approve_account_id, role,
             participation_profile, permissions, message_support=message_support,
             notify=notify, authoritative=authoritative)
@@ -968,29 +929,28 @@ class GroupsModel(Model):
                 "approved_by": str(account_id),
                 "group_id": str(group_id),
             })
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, "user", str(approve_account_id), account_id,
                 GroupsModel.MESSAGE_GROUP_REQUEST_APPROVED, notify,
                 flags=["remove_delivered"], authoritative=authoritative)
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int",
               reject_account_id="int", key="str", notify="json_dict", authoritative="bool")
-    def reject_join_group(self, gamespace_id, group_id, account_id, reject_account_id, key,
-                          notify=None, authoritative=False):
+    async def reject_join_group(self, gamespace_id, group_id, account_id, reject_account_id, key,
+                                notify=None, authoritative=False):
 
-        group = yield self.get_group(gamespace_id, group_id)
+        group = await self.get_group(gamespace_id, group_id)
 
         if group.join_method != GroupJoinMethod.APPROVE:
             raise GroupError(409, "This group is not approve-like, it is: {0}".format(str(group.join_method)))
 
         if not group.is_owner(account_id):
-            participation = yield self.get_group_participation(gamespace_id, group_id, account_id)
+            participation = await self.get_group_participation(gamespace_id, group_id, account_id)
 
             if not participation.has_permission(GroupsModel.PERMISSION_REQUEST_APPROVAL):
                 raise GroupError(406, "You have no permission to reject items")
 
-        request = yield self.requests.acquire(gamespace_id, reject_account_id, key)
+        request = await self.requests.acquire(gamespace_id, reject_account_id, key)
 
         if request.type != RequestType.GROUP:
             raise GroupError(400, "Bad request object")
@@ -1003,19 +963,18 @@ class GroupsModel(Model):
                 "rejected_by": str(account_id),
                 "group_id": str(group_id)
             })
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, "user", str(reject_account_id), account_id,
                 GroupsModel.MESSAGE_GROUP_REQUEST_REJECTED, notify,
                 flags=["remove_delivered"], authoritative=authoritative)
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int",
               participation_profile="json_dict", key="str",
               notify="json_dict", authoritative="bool")
-    def join_group(self, gamespace_id, group_id, account_id, participation_profile,
-                   key=None, notify=None, authoritative=False):
+    async def join_group(self, gamespace_id, group_id, account_id, participation_profile,
+                         key=None, notify=None, authoritative=False):
 
-        group = yield self.get_group(gamespace_id, group_id)
+        group = await self.get_group(gamespace_id, group_id)
 
         if group.free_members == 0:
             raise GroupError(410, "Group is full")
@@ -1028,18 +987,17 @@ class GroupsModel(Model):
 
         message_support = GroupFlags.MESSAGE_SUPPORT in group.flags
 
-        yield self.__internal_join_group__(
+        await self.__internal_join_group__(
             gamespace_id, group_id, account_id, role,
             participation_profile, permissions, message_support=message_support,
             notify=notify, authoritative=authoritative)
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int",
               participation_profile="json_dict", key="str", notify="json_dict", authoritative="bool")
-    def accept_group_invitation(self, gamespace_id, group_id, account_id, participation_profile, key,
-                                notify=None, authoritative=False):
+    async def accept_group_invitation(self, gamespace_id, group_id, account_id, participation_profile, key,
+                                      notify=None, authoritative=False):
 
-        group = yield self.get_group(gamespace_id, group_id)
+        group = await self.get_group(gamespace_id, group_id)
 
         if group.free_members == 0:
             raise GroupError(410, "Group is full")
@@ -1049,7 +1007,7 @@ class GroupsModel(Model):
                 raise GroupError(406, "Group is invite-based and invite key is not passed")
 
             try:
-                request = yield self.requests.acquire(gamespace_id, account_id, key)
+                request = await self.requests.acquire(gamespace_id, account_id, key)
             except NoSuchRequest:
                 raise GroupError(410, "No such invite request")
             except RequestError as e:
@@ -1071,23 +1029,22 @@ class GroupsModel(Model):
 
         message_support = GroupFlags.MESSAGE_SUPPORT in group.flags
 
-        yield self.__internal_join_group__(
+        await self.__internal_join_group__(
             gamespace_id, group_id, account_id, role,
             participation_profile, permissions, message_support=message_support,
             notify=notify, authoritative=authoritative)
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", key="str", notify="json_dict", authoritative="bool")
-    def reject_group_invitation(self, gamespace_id, group_id, account_id, key, notify=None, authoritative=False):
+    async def reject_group_invitation(self, gamespace_id, group_id, account_id, key, notify=None, authoritative=False):
 
-        group = yield self.get_group(gamespace_id, group_id)
+        group = await self.get_group(gamespace_id, group_id)
 
         if group.join_method == GroupJoinMethod.INVITE:
             if not key:
                 raise GroupError(406, "Group is invite-based and invite key is not passed")
 
             try:
-                request = yield self.requests.acquire(gamespace_id, account_id, key)
+                request = await self.requests.acquire(gamespace_id, account_id, key)
             except NoSuchRequest:
                 raise GroupError(410, "No such invite request")
             except RequestError as e:
@@ -1105,21 +1062,20 @@ class GroupsModel(Model):
         message_support = GroupFlags.MESSAGE_SUPPORT in group.flags
 
         if message_support and notify:
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
                 GroupsModel.MESSAGE_GROUP_INVITE_REJECTED, notify,
                 flags=["remove_delivered"], authoritative=authoritative)
 
-    @coroutine
-    def __internal_join_group__(
+    async def __internal_join_group__(
             self, gamespace_id, group_id, account_id, participation_role,
             participation_profile, permissions, message_support=True,
             notify=None, authoritative=False):
 
-        with (yield self.db.acquire(auto_commit=False)) as db:
+        async with self.db.acquire(auto_commit=False) as db:
             try:
                 try:
-                    group = yield db.get(
+                    group = await db.get(
                         """
                             SELECT `group_free_members` FROM `groups`
                             WHERE `gamespace_id`=%s AND `group_id`=%s
@@ -1136,7 +1092,7 @@ class GroupsModel(Model):
 
                 if message_support:
                     try:
-                        yield self.internal.request(
+                        await self.internal.request(
                             "message", "join_group",
                             gamespace=gamespace_id, group_class=GroupsModel.GROUP_CLASS,
                             group_key=str(group_id), account_id=account_id,
@@ -1149,7 +1105,7 @@ class GroupsModel(Model):
                 # first, add the joined record
 
                 try:
-                    yield db.execute(
+                    await db.execute(
                         """
                             INSERT INTO `group_participants`
                             (`gamespace_id`, `group_id`, `account_id`, `participation_role`, 
@@ -1167,7 +1123,7 @@ class GroupsModel(Model):
                 group_free_members -= 1
 
                 try:
-                    yield db.execute(
+                    await db.execute(
                         """
                             UPDATE `groups`
                             SET `group_free_members`=%s
@@ -1180,15 +1136,14 @@ class GroupsModel(Model):
                 group_free_members -= 1
 
             finally:
-                yield db.commit()
+                await db.commit()
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", notify="json_dict", authoritative="bool")
-    def leave_group(self, gamespace_id, group_id, account_id, notify=None, authoritative=False):
+    async def leave_group(self, gamespace_id, group_id, account_id, notify=None, authoritative=False):
 
-        with (yield self.db.acquire(auto_commit=False)) as db:
+        async with self.db.acquire(auto_commit=False) as db:
             try:
-                data = yield db.get(
+                data = await db.get(
                     """
                         SELECT *
                         FROM `groups`
@@ -1202,7 +1157,7 @@ class GroupsModel(Model):
                 if group.is_owner(account_id):
                     raise GroupError(409, "Group owner cannot leave a group, transfer ownership first")
 
-                yield db.execute(
+                await db.execute(
                     """
                         UPDATE `groups`
                         SET `group_free_members`=`group_free_members`+1
@@ -1210,7 +1165,7 @@ class GroupsModel(Model):
                         LIMIT 1;
                     """, gamespace_id, group_id)
 
-                yield db.execute(
+                await db.execute(
                     """
                         DELETE FROM `group_participants`
                         WHERE `gamespace_id`=%s AND `group_id`=%s AND `account_id`=%s
@@ -1219,34 +1174,33 @@ class GroupsModel(Model):
 
                 if GroupFlags.MESSAGE_SUPPORT in group.flags:
                     try:
-                        yield self.internal.request(
+                        await self.internal.request(
                             "message", "leave_group",
                             gamespace=gamespace_id, group_class=GroupsModel.GROUP_CLASS,
                             group_key=str(group_id), account_id=account_id,
                             notify=notify, authoritative=authoritative)
                     except InternalError as e:
-                        raise GroupError(e.code, e.message)
+                        raise GroupError(e.code, str(e))
 
             except DatabaseError as e:
                 raise GroupError(500, "Failed to get a group: " + str(e.args[1]))
 
             finally:
-                yield db.commit()
+                await db.commit()
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", kicker_account_id="int", account_id="int",
               notify="json_dict", authoritative="bool")
-    def kick_from_group(self, gamespace_id, group_id, kicker_account_id, account_id,
-                        notify=None, authoritative=False):
+    async def kick_from_group(self, gamespace_id, group_id, kicker_account_id, account_id,
+                              notify=None, authoritative=False):
 
-        with (yield self.db.acquire()) as db:
-            group = yield self.get_group(gamespace_id, group_id, db=db)
+        async with self.db.acquire() as db:
+            group = await self.get_group(gamespace_id, group_id, db=db)
 
             if group.is_owner(account_id):
                 raise GroupError(406, "You cannot kick an owner")
 
             if not group.is_owner(kicker_account_id):
-                participants = yield self.get_group_participants(
+                participants = await self.get_group_participants(
                     gamespace_id, group_id, [account_id, kicker_account_id], db=db)
 
                 kicker_permissions = participants[kicker_account_id]
@@ -1261,32 +1215,31 @@ class GroupsModel(Model):
             if notify:
                 notify["account_id"] = account_id
 
-                yield self.leave_group(gamespace_id, group_id, account_id,
+                await self.leave_group(gamespace_id, group_id, account_id,
                                        notify=notify, authoritative=authoritative)
 
                 if notify and GroupFlags.MESSAGE_SUPPORT in group.flags:
-                    yield self.__send_message__(
+                    await self.__send_message__(
                         gamespace_id, "user", str(account_id), kicker_account_id,
                         GroupsModel.MESSAGE_GROUP_KICKED, notify,
                         flags=["remove_delivered"], authoritative=authoritative)
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int", account_id="int", account_transfer_to="int",
               account_my_role="int", notify="json_dict", authoritative="bool")
-    def transfer_ownership(self, gamespace_id, group_id, account_id,
-                           account_transfer_to, account_my_role, notify=None, authoritative=False):
+    async def transfer_ownership(self, gamespace_id, group_id, account_id,
+                                 account_transfer_to, account_my_role, notify=None, authoritative=False):
 
-        group = yield self.get_group(gamespace_id, group_id)
+        group = await self.get_group(gamespace_id, group_id)
 
         if not group.is_owner(account_id):
             raise GroupError(409, "You are not an owner of that group")
 
-        has_participation = yield self.has_group_participation(gamespace_id, group_id, account_transfer_to)
+        has_participation = await self.has_group_participation(gamespace_id, group_id, account_transfer_to)
         if not has_participation:
             raise GroupError(406, "Account transfer to is no participating in that group")
 
         try:
-            yield self.db.execute(
+            await self.db.execute(
                 """
                     UPDATE `groups`
                     SET `group_owner`=%s
@@ -1298,7 +1251,7 @@ class GroupsModel(Model):
 
         try:
             # assign maximum role to new owner and set defined role to my own
-            yield self.db.execute(
+            await self.db.execute(
                 """
                     INSERT INTO `group_participants`
                     (`gamespace_id`, `group_id`, `account_id`, `participation_role`, `participation_profile`,
@@ -1313,17 +1266,16 @@ class GroupsModel(Model):
             pass
 
         if notify and GroupFlags.MESSAGE_SUPPORT in group.flags:
-            yield self.__send_message__(
+            await self.__send_message__(
                 gamespace_id, GroupsModel.GROUP_CLASS, str(group_id), account_id,
                 GroupsModel.MESSAGE_OWNERSHIP_TRANSFERRED,
                 notify, authoritative=authoritative)
 
-    @coroutine
     @validate(gamespace_id="int", group_id="int")
-    def list_group_participants(self, gamespace_id, group_id, db=None):
+    async def list_group_participants(self, gamespace_id, group_id, db=None):
 
         try:
-            participants = yield (db or self.db).query(
+            participants = await (db or self.db).query(
                 """
                     SELECT *
                     FROM `group_participants`
@@ -1332,16 +1284,15 @@ class GroupsModel(Model):
         except DatabaseError as e:
             raise GroupError(500, "Failed to list group participants: " + str(e.args[1]))
 
-        raise Return(map(GroupParticipationAdapter, participants))
+        return map(GroupParticipationAdapter, participants)
 
-    @coroutine
     @validate(gamespace_id="int", query="str")
-    def search_groups(self, gamespace_id, query, db=None):
+    async def search_groups(self, gamespace_id, query, db=None):
 
         words = re.findall(r'[^\s]+', query)
 
         if not words:
-            raise Return([])
+            return []
 
         if len(words) > 32:
             # too many words
@@ -1350,7 +1301,7 @@ class GroupsModel(Model):
         compiled = u" ".join(u"+" + word + u"*" for word in words if len(word) > 2)
 
         try:
-            groups = yield (db or self.db).query(
+            groups = await (db or self.db).query(
                 u"""
                     SELECT *
                     FROM `groups`
@@ -1359,4 +1310,4 @@ class GroupsModel(Model):
         except DatabaseError as e:
             raise GroupError(500, "Failed to list group participants: " + str(e.args[1]))
 
-        raise Return(map(GroupAdapter, groups))
+        return map(GroupAdapter, groups)

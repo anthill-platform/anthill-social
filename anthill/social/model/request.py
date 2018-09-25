@@ -1,15 +1,14 @@
 
-from tornado.gen import coroutine, Return
+from anthill.common import Enum
+from anthill.common.validate import validate
+from anthill.common.database import DatabaseError, DuplicateError
+from anthill.common.internal import Internal, InternalError
 
-import profile
+from . import profile
+
 import datetime
 import uuid
 import ujson
-
-from common import Enum
-from common.validate import validate
-from common.database import DatabaseError, DuplicateError
-from common.internal import Internal, InternalError
 
 
 class RequestError(Exception):
@@ -36,7 +35,7 @@ class RequestAdapter(object):
         self.payload = data.get("request_payload")
 
         # apparently, mysql returns LONGTEXT field type instead of JSON in case of union calls
-        if isinstance(self.payload, (str, unicode)):
+        if isinstance(self.payload, str):
             self.payload = ujson.loads(self.payload)
 
         self.kind = RequestKind(RequestKind.OUTGOING
@@ -114,28 +113,27 @@ class RequestsModel(profile.ProfilesModel):
     def has_delete_account_event(self):
         return True
 
-    @coroutine
-    def accounts_deleted(self, gamespace, accounts, gamespace_only):
+    async def accounts_deleted(self, gamespace, accounts, gamespace_only):
         try:
-            with (yield self.db.acquire()) as db:
+            async with self.db.acquire() as db:
                 if gamespace_only:
-                    yield db.execute(
+                    await db.execute(
                         """
                             DELETE FROM `requests`
                             WHERE `gamespace_id`=%s AND `account_id` IN %s;
                         """, gamespace, accounts)
-                    yield db.execute(
+                    await db.execute(
                         """
                             DELETE FROM `requests`
                             WHERE `gamespace_id`=%s AND `request_type`=%s AND `request_object` IN %s;
                         """, gamespace, RequestType.ACCOUNT, accounts)
                 else:
-                    yield db.execute(
+                    await db.execute(
                         """
                             DELETE FROM `requests`
                             WHERE `account_id` IN %s;
                         """, accounts)
-                    yield db.execute(
+                    await db.execute(
                         """
                             DELETE FROM `requests`
                             WHERE `request_type`=%s AND `request_object` IN %s;
@@ -143,13 +141,11 @@ class RequestsModel(profile.ProfilesModel):
         except DatabaseError as e:
             raise RequestError(500, "Failed to delete requests: " + e.args[1])
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", request_type='str_name', request_object="int",
               request_payload="json")
-    def create_request(self, gamespace_id, account_id, request_type, request_object, request_payload=None):
-
-        with (yield self.db.acquire()) as db:
-            existing_request = yield db.get(
+    async def create_request(self, gamespace_id, account_id, request_type, request_object, request_payload=None):
+        async with self.db.acquire() as db:
+            existing_request = await db.get(
                 """
                 SELECT `request_key` FROM `requests`
                 WHERE `gamespace_id`=%s AND `account_id`=%s AND `request_type`=%s AND `request_object`=%s
@@ -157,14 +153,14 @@ class RequestsModel(profile.ProfilesModel):
                 """, gamespace_id, account_id, str(request_type), request_object)
 
             if existing_request:
-                raise Return(existing_request["request_key"])
+                return existing_request["request_key"]
 
             request_time = datetime.datetime.now()
             expire = datetime.datetime.now() + datetime.timedelta(seconds=RequestsModel.REQUEST_EXPIRE_IN)
             key = str(uuid.uuid4())
 
             try:
-                yield db.execute(
+                await db.execute(
                     """
                     INSERT INTO `requests`
                     (`account_id`, `gamespace_id`, `request_type`, `request_object`, `request_time`, `request_expire`, 
@@ -177,13 +173,12 @@ class RequestsModel(profile.ProfilesModel):
             except DatabaseError as e:
                 raise RequestError(500, "Failed to create new request: " + str(e.args[1]))
 
-            raise Return(key)
+            return key
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int")
-    def cleanup(self, gamespace_id, account_id):
+    async def cleanup(self, gamespace_id, account_id):
         try:
-            yield self.db.execute("""
+            await self.db.execute("""
                 DELETE FROM `requests`
                 WHERE `gamespace_id`=%s AND `account_id`=%s;
             """, gamespace_id, account_id)
@@ -199,11 +194,10 @@ class RequestsModel(profile.ProfilesModel):
             action="get_public",
             profile_fields=profile_fields)
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", profile_fields="json_list_of_strings")
-    def list_outgoing_account_requests(self, gamespace_id, account_id, profile_fields=None):
+    async def list_outgoing_account_requests(self, gamespace_id, account_id, profile_fields=None):
         try:
-            data = yield self.db.query("""
+            data = await self.db.query("""
                 SELECT `account_id`, `request_type`, `request_object`, `request_time`, `request_key`, `request_payload`
                 FROM `requests`
                 WHERE `gamespace_id`=%s AND `account_id`=%s;
@@ -218,20 +212,19 @@ class RequestsModel(profile.ProfilesModel):
             account_ids = [r.object for r in requests]
 
             try:
-                profiles = yield self.__fetch_profile__(gamespace_id, account_ids, profile_fields)
+                profiles = await self.__fetch_profile__(gamespace_id, account_ids, profile_fields)
             except InternalError as e:
-                raise RequestError(e.code, e.message)
+                raise RequestError(e.code, str(e))
 
             for r in requests:
                 r.profile = profiles.get(str(r.object), None)
 
-        raise Return(requests)
+        return requests
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", profile_fields="json_list_of_strings")
-    def list_incoming_account_requests(self, gamespace_id, account_id, profile_fields=None):
+    async def list_incoming_account_requests(self, gamespace_id, account_id, profile_fields=None):
         try:
-            data = yield self.db.query("""
+            data = await self.db.query("""
                 SELECT `account_id`, `request_type`, `request_object`, `request_time`, `request_key`, `request_payload`
                 FROM `requests`
                 WHERE `gamespace_id`=%s AND `request_type`=%s AND `request_object`=%s;
@@ -246,20 +239,19 @@ class RequestsModel(profile.ProfilesModel):
             account_ids = [r.account for r in requests]
 
             try:
-                profiles = yield self.__fetch_profile__(gamespace_id, account_ids, profile_fields)
+                profiles = await self.__fetch_profile__(gamespace_id, account_ids, profile_fields)
             except InternalError as e:
-                raise RequestError(e.code, e.message)
+                raise RequestError(e.code, str(e))
 
             for r in requests:
                 r.profile = profiles.get(str(r.account), None)
 
-        raise Return(requests)
+        return requests
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", profile_fields="json_list_of_strings")
-    def list_total_account_requests(self, gamespace_id, account_id, profile_fields=None):
+    async def list_total_account_requests(self, gamespace_id, account_id, profile_fields=None):
         try:
-            data = yield self.db.query("""
+            data = await self.db.query("""
                 SELECT `account_id`, `request_type`, `request_object`, `request_time`, `request_key`, `request_payload`
                 FROM `requests`
                 WHERE `gamespace_id`=%s AND `request_type`=%s AND `request_object`=%s
@@ -280,21 +272,20 @@ class RequestsModel(profile.ProfilesModel):
             account_ids = [r.remote_object for r in requests if r.remote_object]
 
             try:
-                profiles = yield self.__fetch_profile__(gamespace_id, account_ids, profile_fields)
+                profiles = await self.__fetch_profile__(gamespace_id, account_ids, profile_fields)
             except InternalError as e:
-                raise RequestError(e.code, e.message)
+                raise RequestError(e.code, str(e))
 
             for r in requests:
                 r.profile = profiles.get(str(r.remote_object), None)
 
-        raise Return(requests)
+        return requests
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", request_type=RequestType, request_object="int")
-    def delete(self, gamespace_id, account_id, request_type, request_object):
+    async def delete(self, gamespace_id, account_id, request_type, request_object):
 
         try:
-            deleted = yield self.db.execute(
+            deleted = await self.db.execute(
                 """
                     DELETE FROM `requests`
                     WHERE `account_id`=%s AND `gamespace_id`=%s AND `request_type`=%s AND `request_object`=%s
@@ -304,15 +295,14 @@ class RequestsModel(profile.ProfilesModel):
         except DatabaseError as e:
             raise RequestError(500, "Failed to delete a request: " + str(e.args[1]))
 
-        raise Return(bool(deleted))
+        return bool(deleted)
 
-    @coroutine
     @validate(gamespace_id="int", account_id="int", key="str")
-    def acquire(self, gamespace_id, account_id, key):
+    async def acquire(self, gamespace_id, account_id, key):
 
-        with (yield self.db.acquire(auto_commit=False)) as db:
+        async with self.db.acquire(auto_commit=False) as db:
             try:
-                request = yield db.get(
+                request = await db.get(
                     """
                         SELECT * FROM `requests`
                         WHERE `gamespace_id`=%s AND `account_id`=%s AND `request_key`=%s
@@ -325,16 +315,16 @@ class RequestsModel(profile.ProfilesModel):
 
                 request = RequestAdapter(request)
 
-                yield db.execute(
+                await db.execute(
                     """
                     DELETE FROM `requests`
                     WHERE `gamespace_id`=%s AND `account_id`=%s AND `request_type`=%s AND `request_object`=%s
                     LIMIT 1;
                     """, gamespace_id, request.account, str(request.type), request.object)
 
-                raise Return(request)
+                return request
 
             except DatabaseError as e:
                 raise RequestError(500, "Failed to acquire a request: " + str(e.args[1]))
             finally:
-                yield db.commit()
+                await db.commit()
