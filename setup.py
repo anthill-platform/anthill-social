@@ -7,6 +7,9 @@ DEPENDENCIES = [
 
 setup(
     name='anthill-social',
+    package_data={
+      "anthill.social": ["anthill/social/sql", "anthill/social/static"]
+    },
     setup_requires=["pypigit-version"],
     git_version="0.1.0",
     description='Social service for Anthill platform',
