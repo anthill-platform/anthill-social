@@ -332,7 +332,7 @@ class GroupsModel(Model):
                     except GroupError:
                         pass
 
-                    raise GroupError(500, "Failed to create in-message group: " + str(e.message))
+                    raise GroupError(500, "Failed to create in-message group: " + str(e))
 
         return group_id
 
@@ -633,7 +633,7 @@ class GroupsModel(Model):
         except DatabaseError as e:
             raise GroupError(500, "Failed to get a group: " + str(e.args[1]))
         else:
-            return map(GroupAdapter, groups)
+            return list(map(GroupAdapter, groups))
 
     @validate(gamespace_id="int", group_id="int", account_id="int")
     async def is_group_owner(self, gamespace_id, group_id, account_id, db=None):
@@ -1284,7 +1284,7 @@ class GroupsModel(Model):
         except DatabaseError as e:
             raise GroupError(500, "Failed to list group participants: " + str(e.args[1]))
 
-        return map(GroupParticipationAdapter, participants)
+        return list(map(GroupParticipationAdapter, participants))
 
     @validate(gamespace_id="int", query="str")
     async def search_groups(self, gamespace_id, query, db=None):
@@ -1310,4 +1310,4 @@ class GroupsModel(Model):
         except DatabaseError as e:
             raise GroupError(500, "Failed to list group participants: " + str(e.args[1]))
 
-        return map(GroupAdapter, groups)
+        return list(map(GroupAdapter, groups))

@@ -432,7 +432,7 @@ class CreateGroupHandler(AuthenticatedHandler):
         max_members = self.get_argument("max_members", GroupsModel.DEFAULT_MAX_MEMBERS)
         group_name = self.get_argument("name", None)
 
-        if join_method_str not in GroupJoinMethod:
+        if join_method_str not in GroupJoinMethod.ALL:
             raise HTTPError(400, "Invalid join method")
 
         join_method = GroupJoinMethod(join_method_str)

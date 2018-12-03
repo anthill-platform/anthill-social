@@ -144,7 +144,7 @@ class SocialTokensModel(Model):
         except DatabaseError as e:
             raise SocialTokensError("Failed get tokens: " + e.args[1])
 
-        return map(SocialTokenAdapter, tokens)
+        return list(map(SocialTokenAdapter, tokens))
 
     async def update_token(self, gamespace_id, credential, username, access_token, expires_at, data):
 
