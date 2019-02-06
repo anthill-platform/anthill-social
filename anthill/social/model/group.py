@@ -398,7 +398,7 @@ class GroupsModel(Model):
     @validate(gamespace_id="int", group_profiles="json_dict_of_dicts", merge="bool")
     async def update_groups(self, gamespace_id, group_profiles, merge=True):
 
-        profiles = GroupBatchProfile(self.db, gamespace_id, group_profiles.keys())
+        profiles = GroupBatchProfile(self.db, gamespace_id, list(group_profiles.keys()))
 
         try:
             result = await profiles.set_data(group_profiles, None, merge=merge)
