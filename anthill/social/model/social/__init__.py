@@ -116,7 +116,8 @@ class SocialAPIModel(object):
                         friends_result[credential_type_ + ":" + str(username)] = friend
 
                 try:
-                    credentials_to_accounts = await self.tokens.lookup_accounts(gamespace, friends_result.keys())
+                    credentials_to_accounts = await self.tokens.lookup_accounts(
+                        gamespace, list(friends_result.keys()))
                 except SocialTokensError as e2:
                     raise APIError(500, e2.message)
 
